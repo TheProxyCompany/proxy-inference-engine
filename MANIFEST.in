@@ -1,4 +1,0 @@
-include README.md
-include logo.png
-recursive-include src *.py
-recursive-include src *.typed
