@@ -15,7 +15,6 @@ def top_p_sampling(logits: mx.array, top_p: float, temperature: float) -> mx.arr
     Returns:
         token selected based on the top-p criterion.
     """
-    # referenced implementation from https://github.com/huggingface/transformers/blob/main/src/transformers/generation/logits_process.py#L449-L460
     probs = mx.softmax(logits * (1 / temperature), axis=-1)
 
     # sort probs in ascending order

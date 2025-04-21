@@ -1,0 +1,91 @@
+{# ------------------------------------------------------------------------ #}
+{# Template configuration                                                   #}
+{# Designed to accept model-specific control tokens                         #}
+{# ------------------------------------------------------------------------ #}
+{%- set add_generation_prompt = add_generation_prompt or true -%}
+{%- set prefill = prefill or none -%}
+
+{# ------------------------------------------------------------------------ #}
+{# Macro: render_interaction                                                #}
+{# Renders individual interactions using model-specific control tokens.     #}
+{# Uses role configurations and tokens (like tool_call_start,               #}
+{# end_of_sequence, etc.) from the model's token configuration.             #}
+{# ------------------------------------------------------------------------ #}
+{%- macro render_interaction(interaction) -%}
+
+    {# Get the role configuration (start/end tags, etc.) for this interaction #}
+    {%- set role = roles.get(interaction['role']) -%}
+    {%- if role is not none -%}
+        {{- role.role_start_tag + role.role_name + role.role_end_tag -}}
+    {%- endif -%}
+
+    {# Render the main content of the interaction                            #}
+    {{- interaction['content'] | safe -}}
+
+    {# Handle tool calls when present                                        #}
+    {%- if interaction.tool_call -%}
+        {%- if tool_calls_start -%}
+            {{- tool_calls_start -}}
+        {%- endif -%}
+
+        {# Tool calls can be raw strings or structured JSON                  #}
+        {%- if interaction.tool_call is string -%}
+            {{- interaction.tool_call | trim -}}
+        {%- else -%}
+            {{- tool_call_start }}
+            {{- interaction.tool_call | tojson(indent=2) | trim -}}
+            {{- tool_call_end -}}
+        {%- endif -%}
+
+        {%- if tool_calls_end -%}
+            {{- tool_calls_end -}}
+        {%- endif -%}
+    {%- endif -%}
+
+    {# Handle tool results when present and not marked as last or silent     #}
+    {%- if interaction.tool_result and not interaction.tool_result.last and not interaction.tool_result.silent -%}
+        {%- if tool_results_start -%}
+            {{- tool_results_start -}}
+        {%- else -%}
+            {{- end_of_message -}}
+            {{- roles.tool.role_start_tag + roles.tool.role_name + roles.tool.role_end_tag -}}
+        {%- endif -%}
+
+        {%- if tool_result_start -%}
+            {{- tool_result_start -}}
+        {%- endif -%}
+        {{- interaction.tool_result.content | safe -}}
+        {%- if tool_result_end -%}
+            {{- tool_result_end -}}
+        {%- endif -%}
+        {%- if tool_results_end -%}
+            {{- tool_results_end -}}
+        {%- endif -%}
+    {%- endif -%}
+
+    {# Add end token based on role configuration                             #}
+    {%- if role is not none and role.end_of_message is not none -%}
+        {{- role.end_of_message -}}
+    {%- else -%}
+        {{- end_of_sequence -}}
+    {%- endif -%}
+
+{%- endmacro -%}
+
+{# ------------------------------------------------------------------------ #}
+{# Main chat template structure                                             #}
+{# Iterates over interactions and assembles the complete chat prompt.       #}
+{# Ensures model-specific control tokens delimit the content appropriately. #}
+{# ------------------------------------------------------------------------ #}
+{{ begin_of_text }}
+{%- for interaction in interactions -%}
+    {{ render_interaction(interaction) -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {%- if roles is not none and roles.assistant is not none -%}
+        {{- roles.assistant.role_start_tag + roles.assistant.role_name + roles.assistant.role_end_tag -}}
+    {%- endif -%}
+{%- endif -%}
+{%- if prefill is not none -%}
+    {{- prefill -}}
+{%- endif -%}

@@ -35,7 +35,6 @@ def min_p_sampling(
         raise ValueError(
             f"`min_tokens_to_keep` has to be a positive integer, but is {min_tokens_to_keep}"
         )
-    # reference implementation: https://github.com/huggingface/transformers/blob/main/src/transformers/generation/logits_process.py#L531-L605
 
     logprobs = logprobs * (1 / temperature)
 

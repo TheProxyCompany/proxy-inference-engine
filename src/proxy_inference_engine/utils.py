@@ -1,11 +1,7 @@
 import logging
-
+import os
 import mlx.core as mx
 import mlx.nn as nn
-from PIL import Image
-from transformers.models.auto.tokenization_auto import AutoTokenizer
-
-from src.proxy_inference_engine.vision.utils import BaseImageProcessor, process_image
 
 logger = logging.getLogger(__name__)
 
@@ -33,62 +29,27 @@ def set_max_reccomended_device_limit():
     else:
         logger.warning(f"Max recommended size is not an integer: {safe_max_size}")
 
-def prepare_inputs(
-    prompt: str | list[str],
-    images: list[Image.Image | str],
-    tokenizer: AutoTokenizer,
-    image_processor: BaseImageProcessor | None,
-    resize_shape: tuple[int, int] | None = None,
-) -> dict[str, mx.array]:
+def load_template(name: str) -> str:
     """
-    Prepare inputs for the model.
+    Load the chat template from the specified file.
+    Looks in the current directory for the file.
 
     Args:
-        prompt: The text prompt or list of prompts
-        images: List of images or image paths
-        tokenizer: The tokenizer to use
-        image_processor: Optional image processor
-        resize_shape: Optional shape to resize images to
+        name: The name of the template file.
+        Defaults to "chat_template.jinja".
 
     Returns:
-        Dictionary of model inputs
+        The content of the template file.
     """
-    # Process images if image processor is provided
-    processed_images = [process_image(img, resize_shape) for img in images]
-    if image_processor is not None:
-        model_inputs = {
-            "input_ids": mx.array(input_ids),
-            "pixel_values": mx.stack(
-                image_processor.preprocess(images=processed_images)
-            ),
-            "attention_mask": mx.array(
-                [(ids != tokenizer.pad_token_id) for ids in input_ids]
-            ).astype(mx.int32)
-        }
-    else:
-        # Use the process_inputs function for more complex processing
-        if "images" in inputs:
-            inputs["pixel_values"] = inputs["images"]
-            inputs.pop("images")
+    name = name or "chat_template.jinja"
+    name = f"{name}.jinja" if not name.endswith(".jinja") else name
 
-        if isinstance(inputs.get("pixel_values", None), list):
-            pixel_values = inputs["pixel_values"]
-        else:
-            pixel_values = mx.array(inputs["pixel_values"])
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    template_path = os.path.join(current_dir, name)
 
-        model_inputs = {}
-        if "input_ids" in inputs:
-            model_inputs["input_ids"] = mx.array(inputs["input_ids"])
-        if "pixel_values" in inputs:
-            model_inputs["pixel_values"] = pixel_values
-        if mask := inputs.get("attention_mask"):
-            model_inputs["attention_mask"] = mx.array(mask)
-        else:
-            model_inputs["attention_mask"] = None
+    # Fall back to default template if specified one doesn't exist
+    if not os.path.exists(template_path):
+        template_path = os.path.join(current_dir, "chat_template.jinja")
 
-        # Convert remaining inputs to model_inputs with mx.array if present
-        for key, value in inputs.items():
-            if key not in model_inputs and not isinstance(value, (str, list)):
-                model_inputs[key] = mx.array(value)
-
-    return model_inputs
+    with open(template_path) as f:
+        return f.read()

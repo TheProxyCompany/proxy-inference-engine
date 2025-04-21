@@ -1,8 +1,10 @@
 import inspect
 from dataclasses import dataclass, field
+from typing import cast
 
 import mlx.core as mx
 import mlx.nn as nn
+
 
 @dataclass
 class VisionConfig:
@@ -284,9 +286,9 @@ class VisionModel(nn.Module):
 
         return rotary_pos_emb.reshape(pos_ids.shape[0], -1)
 
-    def get_window_index(self, grid_thw):
+    def get_window_index(self, grid_thw) -> tuple[mx.array, mx.array]:
         window_index = []
-        cu_window_seqlens = [0]
+        cu_window_seqlens = mx.array([0])
         window_index_id = 0
         vit_merger_window_size = (
             self.window_size // self.spatial_merge_size // self.patch_size
@@ -305,7 +307,6 @@ class VisionModel(nn.Module):
             num_windows_h = (llm_grid_h + pad_h) // vit_merger_window_size
             num_windows_w = (llm_grid_w + pad_w) // vit_merger_window_size
 
-            # Replace F.pad with np.pad
             index_padded = mx.pad(
                 index,
                 ((0, 0), (0, pad_h), (0, pad_w)),
@@ -329,23 +330,38 @@ class VisionModel(nn.Module):
                 vit_merger_window_size,
             )
 
-            # Replace torch operations with numpy
-            seqlens = mx.sum(index_padded != -100, axis=(2, 3)).reshape(-1)
-            index_padded = index_padded.reshape(-1)
-            index = np.where(index_padded != -100)[
-                0
-            ].tolist()  # [i for i, x in enumerate(index_padded) if x != -100]
-            index_new = index_padded[index]
+            # Identify valid indices (not padding)
+            valid_mask = index_padded != -100
+            assert isinstance(valid_mask, mx.array)
+            seqlens = mx.sum(valid_mask.astype(mx.int32), axis=(2, 3)).reshape(-1)
+            index_padded_flat = index_padded.reshape(-1)
+
+            # Use argsort to find the indices of valid elements
+            valid_mask_flat = valid_mask.reshape(-1)
+            num_valid = mx.sum(valid_mask_flat.astype(mx.int32))
+            # Cast item() result for comparison
+            num_valid_val = cast(int, num_valid.item())
+            if num_valid_val > 0:
+                sorted_indices = mx.argsort(valid_mask_flat.astype(mx.int32))
+                # Cast item() result for slicing calculation
+                valid_indices = sorted_indices[
+                    int(sorted_indices.size - num_valid_val) :
+                ]
+                index_new = index_padded_flat[valid_indices]
+            else:
+                # Handle case with no valid indices in a window (should be rare)
+                index_new = mx.array([], dtype=index_padded_flat.dtype)
 
             window_index.append(index_new + window_index_id)
+
+            # Calculate cumulative sequence lengths for windows
             cu_seqlens_tmp = (
                 mx.cumsum(seqlens, axis=0) * self.spatial_merge_unit
                 + cu_window_seqlens[-1]
             )
-            cu_window_seqlens.extend(cu_seqlens_tmp.tolist())
+            cu_window_seqlens = mx.concatenate([cu_window_seqlens, cu_seqlens_tmp])
             window_index_id += int(grid_t * llm_grid_h * llm_grid_w)
 
-        # Replace torch.cat with np.concatenate
         window_index = mx.concatenate(window_index, axis=0)
         cu_window_seqlens = mx.array(cu_window_seqlens)
 
@@ -357,6 +373,12 @@ class VisionModel(nn.Module):
         grid_thw: mx.array | None = None,
         output_hidden_states: bool | None = None,
     ) -> mx.array:
+        # Ensure grid_thw is provided, as it's necessary
+        if grid_thw is None:
+            raise ValueError(
+                "grid_thw must be provided for the VisionModel forward pass."
+            )
+
         hidden_states = self.patch_embed(hidden_states)
         rotary_pos_emb = self.rot_pos_emb(grid_thw)
         window_index, cu_window_seqlens = self.get_window_index(grid_thw)
@@ -388,18 +410,26 @@ class VisionModel(nn.Module):
         batch_size = grid_thw.shape[0]
 
         # Calculate cu_seqlens for each item in the batch
-        cu_seqlens = []
+        cu_seqlens_list = []
         for i in range(batch_size):
-            seq_len = grid_thw[i, 1] * grid_thw[i, 2]
-            cu_seqlens.append(mx.repeat(seq_len, grid_thw[i, 0]))
+            # Use cast(int, item()) for integer dimensions/repeats
+            grid_t_i = cast(int, grid_thw[i, 0].item())
+            grid_h_i = cast(int, grid_thw[i, 1].item())
+            grid_w_i = cast(int, grid_thw[i, 2].item())
+            # Pass an array to mx.repeat, not a Python int
+            seq_len_arr = mx.array([grid_h_i * grid_w_i])
+            cu_seqlens_list.append(mx.repeat(seq_len_arr, grid_t_i))
 
         # Concatenate the cu_seqlens for all items in the batch
-        cu_seqlens = mx.concatenate(cu_seqlens)
+        cu_seqlens = mx.concatenate(cu_seqlens_list)
 
         cu_seqlens = mx.cumsum(cu_seqlens.astype(mx.int32), axis=0)
         cu_seqlens = mx.pad(cu_seqlens, (1, 0), mode="constant", constant_values=0)
 
-        encoder_states = (hidden_states,) if output_hidden_states else None
+        # Initialize encoder_states correctly based on output_hidden_states
+        encoder_states = ()  # Use tuple for potentially empty states
+        if output_hidden_states:
+            encoder_states = (hidden_states,)
 
         for layer_num, blk in enumerate(self.blocks):
             if layer_num in self.fullatt_block_indexes:
@@ -412,6 +442,7 @@ class VisionModel(nn.Module):
             )
 
             if output_hidden_states:
+                # Ensure encoder_states is always a tuple
                 encoder_states = encoder_states + (hidden_states,)
 
         hidden_states = self.merger(hidden_states)

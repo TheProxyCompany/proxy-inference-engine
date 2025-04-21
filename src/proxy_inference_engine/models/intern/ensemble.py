@@ -1,5 +1,6 @@
 import mlx.core as mx
 import mlx.nn as nn
+from typing import cast
 
 from src.proxy_inference_engine.cache import BaseCache
 from src.proxy_inference_engine.models.base import BaseModelArgs
@@ -68,13 +69,30 @@ class Model(nn.Module):
     ):
         image_token_id = self.config.image_token_id
         video_token_id = self.config.video_token_id
-        # Positions of <image> tokens in input_ids, assuming batch size is 1
-        image_positions = input_ids == image_token_id
-        if mx.sum(image_positions) == 0:
-            image_positions = input_ids == video_token_id
 
-        image_indices = np.where(image_positions)[1].tolist()
-        inputs_embeds[:, image_indices, :] = image_features
+        # Identify positions of image tokens (assuming batch size 1)
+        image_positions = input_ids == image_token_id
+        num_images = mx.sum(image_positions.astype(mx.int32))
+
+        # Fallback to video token if no image token found
+        num_images_val: int = cast(int, num_images.item())
+        if num_images_val == 0:
+            image_positions = input_ids == video_token_id
+            num_images = mx.sum(image_positions.astype(mx.int32))
+            num_images_val = cast(int, num_images.item())
+
+        # Replace token embeddings with image features if any were found
+        if num_images_val > 0:
+            seq_len = input_ids.shape[1]
+            positions_int = image_positions.astype(mx.int32)
+            # Use argsort to find indices: True (1) values end up at the end after sorting
+            sorted_indices = mx.argsort(positions_int, axis=1)
+            # Extract indices corresponding to image tokens (assumes batch size 1)
+            image_indices = sorted_indices[0, seq_len - num_images_val :]
+
+            # Perform in-place update (assumes bs=1 for inputs/features)
+            inputs_embeds[0, image_indices] = image_features[0]
+
         return inputs_embeds
 
     def __call__(
