@@ -1,4 +1,4 @@
-from proxy_inference_engine.models.utils import (
+from src.proxy_inference_engine.models.utils import (
     get_model_architecture,
     get_model_path,
     load,

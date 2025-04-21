@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import mlx.core as mx
 import mlx.nn as nn
 
-from proxy_inference_engine.cache import BaseCache
-from proxy_inference_engine.models.base import create_attention_mask
+from src.proxy_inference_engine.cache import BaseCache
+from src.proxy_inference_engine.models.base import create_attention_mask
 
 
 @dataclass

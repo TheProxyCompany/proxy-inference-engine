@@ -1,12 +1,11 @@
 import logging
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
 from PIL import Image
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 
-from proxy_inference_engine.vision.utils import BaseImageProcessor, process_image
+from src.proxy_inference_engine.vision.utils import BaseImageProcessor, process_image
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +32,6 @@ def set_max_reccomended_device_limit():
         logger.info(f"Set wired memory limit to {max_rec_gb:.2f}GB")
     else:
         logger.warning(f"Max recommended size is not an integer: {safe_max_size}")
-
-def process_inputs(tokenizer: AutoTokenizer, images: list[Image.Image], prompts: list[str]) -> dict[str, Any]:
-    """
-    Process input images and prompts for the model.
-    This is a stub function that should be replaced with actual implementation
-    based on your tokenizer and image processing requirements.
-    """
-    # Placeholder implementation - replace with actual implementation
-    inputs = {}
-    # Here you would typically process images and prompts to create inputs
-    # for your specific model architecture
-    return inputs
 
 def prepare_inputs(
     prompt: str | list[str],
@@ -80,8 +67,6 @@ def prepare_inputs(
         }
     else:
         # Use the process_inputs function for more complex processing
-        inputs = process_inputs(tokenizer, processed_images, prompts)
-
         if "images" in inputs:
             inputs["pixel_values"] = inputs["images"]
             inputs.pop("images")

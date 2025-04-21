@@ -6,8 +6,8 @@ from typing import Callable
 import mlx.core as mx
 import mlx.nn as nn
 
-from proxy_inference_engine.cache import BaseCache
-from proxy_inference_engine.cache.reusable import ReusableKVCache
+from src.proxy_inference_engine.cache import BaseCache
+from src.proxy_inference_engine.cache.reusable import ReusableKVCache
 
 logger = logging.getLogger(__name__)
 

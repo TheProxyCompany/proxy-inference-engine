@@ -11,7 +11,7 @@ import mlx.nn as nn
 from huggingface_hub import snapshot_download
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 
-from proxy_inference_engine.utils import sanitize_weights
+from src.proxy_inference_engine.utils import sanitize_weights
 
 logger = logging.getLogger(__name__)
 
