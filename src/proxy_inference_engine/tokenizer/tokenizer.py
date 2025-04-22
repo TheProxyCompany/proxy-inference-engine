@@ -8,7 +8,6 @@ from typing import Any
 
 import mlx.core as mx
 
-from proxy_inference_engine.utils import load_template
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
@@ -39,21 +38,35 @@ class Tokenizer:
         self._tokenizer = tokenizer
         self._control_tokens = control_tokens
 
-    def load_chat_template(self, file_name: str) -> None:
+    def load_chat_template(
+        self,
+        file_name: str | None = None,
+        template_string: str | None = None,
+    ) -> None:
         """Load a chat template from a file.
 
         Args:
             file_name: The name of the file to load the chat template from. No extension is needed.
+            template_string: A string to use as the chat template.
         """
-        self._tokenizer.chat_template = load_template(file_name)
+        if file_name and template_string:
+            raise ValueError("Cannot provide both file_name and template_string")
 
-    def set_chat_template(self, template: str) -> None:
-        """Set the chat template for the tokenizer.
+        if template_string:
+            self._tokenizer.chat_template = template_string
+        else:
+            name = file_name or "chat_template.jinja"
+            name = f"{name}.jinja" if not name.endswith(".jinja") else name
 
-        Args:
-            template: The chat template to set
-        """
-        self._tokenizer.chat_template = template
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            template_path = os.path.join(current_dir, name)
+
+            # Fall back to default template if specified one doesn't exist
+            if not os.path.exists(template_path):
+                template_path = os.path.join(current_dir, "chat_template.jinja")
+
+            with open(template_path) as f:
+                self._tokenizer.chat_template = f.read()
 
     @property
     def control_tokens(self) -> ControlTokens:
@@ -163,3 +176,28 @@ class Tokenizer:
             model_path, **kwargs
         )
         return Tokenizer(tokenizer, control_tokens)
+
+def load_template(name: str) -> str:
+    """
+    Load the chat template from the specified file.
+    Looks in the current directory for the file.
+
+    Args:
+        name: The name of the template file.
+        Defaults to "chat_template.jinja".
+
+    Returns:
+        The content of the template file.
+    """
+    name = name or "chat_template.jinja"
+    name = f"{name}.jinja" if not name.endswith(".jinja") else name
+
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    template_path = os.path.join(current_dir, name)
+
+    # Fall back to default template if specified one doesn't exist
+    if not os.path.exists(template_path):
+        template_path = os.path.join(current_dir, "chat_template.jinja")
+
+    with open(template_path) as f:
+        return f.read()

@@ -1,5 +1,4 @@
 import logging
-import os
 import mlx.core as mx
 import mlx.nn as nn
 
@@ -28,28 +27,3 @@ def set_max_reccomended_device_limit():
         logger.info(f"Set wired memory limit to {max_rec_gb:.2f}GB")
     else:
         logger.warning(f"Max recommended size is not an integer: {safe_max_size}")
-
-def load_template(name: str) -> str:
-    """
-    Load the chat template from the specified file.
-    Looks in the current directory for the file.
-
-    Args:
-        name: The name of the template file.
-        Defaults to "chat_template.jinja".
-
-    Returns:
-        The content of the template file.
-    """
-    name = name or "chat_template.jinja"
-    name = f"{name}.jinja" if not name.endswith(".jinja") else name
-
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    template_path = os.path.join(current_dir, name)
-
-    # Fall back to default template if specified one doesn't exist
-    if not os.path.exists(template_path):
-        template_path = os.path.join(current_dir, "chat_template.jinja")
-
-    with open(template_path) as f:
-        return f.read()
