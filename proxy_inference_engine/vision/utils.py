@@ -39,7 +39,7 @@ class BaseImageProcessor(ImageProcessor):
         self.crop_size = crop_size
 
     @abstractmethod
-    def preprocess(self, images) -> list[mx.array]:
+    def preprocess(self, images: list[Image.Image]) -> list[mx.array]:
         pass
 
 def load_image(image_source: str | Path | BytesIO, timeout: int = 10) -> Image.Image:

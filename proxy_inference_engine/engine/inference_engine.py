@@ -1,5 +1,4 @@
 from collections.abc import Callable, Iterator
-from typing import Any
 
 from pse.structuring_engine import StructuringEngine
 
@@ -26,7 +25,7 @@ class InferenceEngine:
 
     def inference(
         self,
-        prompt: str | list[dict[str, Any]] | list[Interaction],
+        prompt: list[Interaction],
         **inference_kwargs,
     ):
         """

@@ -16,6 +16,8 @@ from proxy_inference_engine.tokenizer.control_tokens import (
     ControlTokens,
     get_control_tokens,
 )
+from proxy_inference_engine.interaction import Interaction
+
 
 logger = logging.getLogger(__name__)
 
@@ -115,28 +117,20 @@ class Tokenizer:
         return self._tokenizer.decode(tokens, **kwargs)
 
     def encode(
-        self, prompt: str | list[dict[str, str]] | dict[str, Any], **kwargs
+        self,
+        prompt: str | list[dict[str, Any]] | list[Interaction],
+        **kwargs,
     ) -> mx.array:
-        """Encode text or chat messages into tokens.
 
-        Handles both raw text and chat message formats. For raw text, supports
-        template substitution of tools and date strings.
-
-        Args:
-            prompt: Text string or list of chat messages to encode
-            **kwargs: Additional encoding options
-
-        Returns:
-            Token IDs or templated string depending on input format
-
-        Raises:
-            ValueError: If chat template produces unsupported format
-        """
         if isinstance(prompt, str):
             return mx.array(self._tokenizer.encode(prompt, **kwargs))
 
-        if isinstance(prompt, dict):
-            prompt = [event.to_dict() for event in prompt.values()]
+        if isinstance(prompt, list):
+            prompt = [
+                event.to_dict()
+                for event in prompt
+                if isinstance(event, Interaction)
+            ]
 
         encoded_prompt = self._tokenizer.apply_chat_template(prompt, **kwargs)
         if isinstance(encoded_prompt, str):
@@ -179,29 +173,3 @@ class Tokenizer:
 
         tokenizer = AutoTokenizer.from_pretrained(model_path, **kwargs)
         return Tokenizer(tokenizer, control_tokens)
-
-
-def load_template(name: str) -> str:
-    """
-    Load the chat template from the specified file.
-    Looks in the current directory for the file.
-
-    Args:
-        name: The name of the template file.
-        Defaults to "chat_template.jinja".
-
-    Returns:
-        The content of the template file.
-    """
-    name = name or "chat_template.jinja"
-    name = f"{name}.jinja" if not name.endswith(".jinja") else name
-
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    template_path = os.path.join(current_dir, name)
-
-    # Fall back to default template if specified one doesn't exist
-    if not os.path.exists(template_path):
-        template_path = os.path.join(current_dir, "chat_template.jinja")
-
-    with open(template_path) as f:
-        return f.read()

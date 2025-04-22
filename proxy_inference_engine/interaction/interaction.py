@@ -59,17 +59,11 @@ class Interaction:
             "content": [content.to_dict() for content in self.content],
         }
 
-        # Process metadata attributes
         for key, value in self.metadata.items():
-            # Handle objects with their own to_dict method
             if value and hasattr(value, "to_dict"):
                 dict[key] = value.to_dict()
             else:
                 dict[key] = value
-
-        # Add compatibility fields for different LLM APIs
-        if self.role == Role.TOOL:
-            dict["tool_call_id"] = str(self.event_id)  # For OpenAI format
 
         return dict
 

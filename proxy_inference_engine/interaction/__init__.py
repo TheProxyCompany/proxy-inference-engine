@@ -22,3 +22,8 @@ class Type(Enum):
     AUDIO = "audio"
     VIDEO = "video"
     ACTION = "action"
+
+from proxy_inference_engine.interaction.interaction import Interaction  # noqa: E402
+from proxy_inference_engine.interaction.content import Content  # noqa: E402
+
+__all__ = ["Interaction", "Content"]
