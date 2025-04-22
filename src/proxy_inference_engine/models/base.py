@@ -5,7 +5,7 @@ from typing import Any, Optional
 import mlx.core as mx
 from mlx.utils import tree_map
 
-from src.proxy_inference_engine.cache.quantized import QuantizedKVCache
+from proxy_inference_engine.cache.kv_cache import QuantizedKVCache
 
 
 @dataclass

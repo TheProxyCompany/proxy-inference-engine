@@ -3,7 +3,7 @@ import inspect
 import mlx.core as mx
 import mlx.nn as nn
 
-from src.proxy_inference_engine.cache import BaseCache
+from proxy_inference_engine.cache.kv_cache import BaseCache
 from src.proxy_inference_engine.models.base import BaseModelArgs
 from src.proxy_inference_engine.models.gemma.language import LanguageModel, RMSNorm, TextConfig
 from src.proxy_inference_engine.models.gemma.vision import VisionConfig, VisionModel

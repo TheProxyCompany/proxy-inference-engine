@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import mlx.core as mx
 
-from src.proxy_inference_engine.cache import BaseCache
+from proxy_inference_engine.cache.kv_cache import BaseCache
 
 
 class ReusableKVCache(BaseCache):

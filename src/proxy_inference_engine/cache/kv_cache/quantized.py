@@ -1,7 +1,7 @@
 import mlx.core as mx
 from mlx.utils import tree_map
 
-from src.proxy_inference_engine.cache import BaseCache
+from proxy_inference_engine.cache.kv_cache import BaseCache
 
 
 class QuantizedKVCache(BaseCache):

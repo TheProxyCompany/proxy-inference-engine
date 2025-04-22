@@ -10,6 +10,8 @@ import mlx.core as mx
 import mlx.nn as nn
 from huggingface_hub import snapshot_download
 from transformers.models.auto.tokenization_auto import AutoTokenizer
+from transformers.tokenization_utils import PreTrainedTokenizer
+from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
 from src.proxy_inference_engine.utils import sanitize_weights
 
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def load(
     path_or_hf_repo: str,
-) -> tuple[nn.Module, AutoTokenizer]:
+) -> tuple[nn.Module, PreTrainedTokenizer | PreTrainedTokenizerFast]:
     """
     Load the model and tokenizer from a given path or a huggingface repository.
 
@@ -32,7 +34,7 @@ def load(
         ValueError: If model class or args class are not found.
     """
     model_path = get_model_path(path_or_hf_repo)
-    model, _ = load_model(model_path.as_posix())
+    model = load_model(model_path.as_posix())
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     return model, tokenizer
