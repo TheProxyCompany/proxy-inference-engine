@@ -4,9 +4,13 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from proxy_inference_engine.cache.kv_cache import BaseCache
-from src.proxy_inference_engine.models.base import BaseModelArgs
-from src.proxy_inference_engine.models.gemma.language import LanguageModel, RMSNorm, TextConfig
-from src.proxy_inference_engine.models.gemma.vision import VisionConfig, VisionModel
+from proxy_inference_engine.models.base import BaseModelArgs
+from proxy_inference_engine.models.gemma.language import (
+    LanguageModel,
+    RMSNorm,
+    TextConfig,
+)
+from proxy_inference_engine.models.gemma.vision import VisionConfig, VisionModel
 
 
 class ModelArgs(BaseModelArgs):
@@ -78,7 +82,6 @@ class Gemma3MultiModalProjector(nn.Module):
 
 
 class Model(nn.Module):
-
     def __init__(self, config: ModelArgs):
         super().__init__()
         self.model_type = config.model_type

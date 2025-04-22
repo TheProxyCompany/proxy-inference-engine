@@ -3,9 +3,9 @@ import mlx.nn as nn
 from typing import cast
 
 from proxy_inference_engine.cache.kv_cache import BaseCache
-from src.proxy_inference_engine.models.base import BaseModelArgs
-from src.proxy_inference_engine.models.intern.language import LanguageModel, TextConfig
-from src.proxy_inference_engine.models.intern.vision import VisionConfig, VisionModel
+from proxy_inference_engine.models.base import BaseModelArgs
+from proxy_inference_engine.models.intern.language import LanguageModel, TextConfig
+from proxy_inference_engine.models.intern.vision import VisionConfig, VisionModel
 
 
 class ModelArgs(BaseModelArgs):

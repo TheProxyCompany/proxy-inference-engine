@@ -12,7 +12,10 @@ from transformers.models.auto.tokenization_auto import AutoTokenizer
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
-from src.proxy_inference_engine.tokenizer.control_tokens import ControlTokens, get_control_tokens
+from proxy_inference_engine.tokenizer.control_tokens import (
+    ControlTokens,
+    get_control_tokens,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +141,9 @@ class Tokenizer:
         encoded_prompt = self._tokenizer.apply_chat_template(prompt, **kwargs)
         if isinstance(encoded_prompt, str):
             encoded_prompt = self._tokenizer.encode(encoded_prompt, **kwargs)
-        elif isinstance(encoded_prompt, list) and any(isinstance(item, str) for item in encoded_prompt):
+        elif isinstance(encoded_prompt, list) and any(
+            isinstance(item, str) for item in encoded_prompt
+        ):
             encoded_prompt = [
                 self._tokenizer.encode(item, **kwargs)
                 for item in encoded_prompt
@@ -172,10 +177,9 @@ class Tokenizer:
             )
             control_tokens = get_control_tokens(str(model_path), {})
 
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_path, **kwargs
-        )
+        tokenizer = AutoTokenizer.from_pretrained(model_path, **kwargs)
         return Tokenizer(tokenizer, control_tokens)
+
 
 def load_template(name: str) -> str:
     """

@@ -48,7 +48,6 @@ dev = [
 "Documentation" = "https://github.com/TheProxyCompany/proxy-inference-engine"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
 include-package-data = true
 
 [tool.black]

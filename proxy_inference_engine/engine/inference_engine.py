@@ -1,9 +1,9 @@
 from collections.abc import Callable, Iterator
 from pse.structuring_engine import StructuringEngine
 
-from src.proxy_inference_engine.tokenizer import Tokenizer
-from src.proxy_inference_engine.cache import PromptCache
-from src.proxy_inference_engine.models import load
+from proxy_inference_engine.tokenizer import Tokenizer
+from proxy_inference_engine.cache import PromptCache
+from proxy_inference_engine.models import load
 
 import logging
 from typing import Any
@@ -12,13 +12,15 @@ import mlx.core as mx
 
 logger = logging.getLogger(__name__)
 
-class Engine:
 
+class Engine:
     def __init__(self, model_path: str):
         self.model, hf_tokenizer = load(model_path)
         self.tokenizer = Tokenizer(hf_tokenizer)
         self.prompt_cache = PromptCache()
-        self.structuring_engine = StructuringEngine(hf_tokenizer, multi_token_sampling=True)
+        self.structuring_engine = StructuringEngine(
+            hf_tokenizer, multi_token_sampling=True
+        )
 
     def run_inference(
         self,
@@ -44,11 +46,7 @@ class Engine:
         cache_system_prompt = inference_kwargs.get("cache_system_prompt", True)
         reuse_prompt_cache = inference_kwargs.get("reuse_prompt_cache", True)
 
-        if (
-            cache_system_prompt
-            and reuse_prompt_cache
-            and not processed_token_ids
-        ):
+        if cache_system_prompt and reuse_prompt_cache and not processed_token_ids:
             self.prompt_cache.load_cached_prompt(encoded_prompt)
 
         logger.info(f"PROMPT:\n{self.tokenizer.decode(encoded_prompt)}")
@@ -78,7 +76,7 @@ class Engine:
             (next_token_id, log_probabilities_for_that_step).
         """
 
-        CACHE_CLEAR_INTERVAL = 256 # Interval for clearing MLX's computation cache
+        CACHE_CLEAR_INTERVAL = 256  # Interval for clearing MLX's computation cache
 
         def _perform_inference_step(
             current_input_ids: mx.array,
@@ -86,10 +84,10 @@ class Engine:
             """Performs one forward pass, updates history, applies processors, and samples."""
             # Perform the forward pass through the model
             logits = self.model(
-                current_input_ids[None], # Add batch dimension for the model
+                current_input_ids[None],  # Add batch dimension for the model
                 pixel_values=pixel_values,
                 mask=mask,
-                cache=self.prompt_cache.cache, # Use the KV cache
+                cache=self.prompt_cache.cache,  # Use the KV cache
             )
             # Extract logits for the most recent token
             last_token_logits = logits[:, -1, :]
@@ -99,10 +97,12 @@ class Engine:
 
             # Apply any configured logits processors sequentially
             current_token_history = self.prompt_cache.computed_ids
-            for processor in (logits_processors or []):
+            for processor in logits_processors or []:
                 processed_logits = processor(current_token_history, processed_logits)
             # Calculate log probabilities (log-softmax normalization)
-            logprobs = processed_logits - mx.logsumexp(processed_logits, axis=-1, keepdims=True)
+            logprobs = processed_logits - mx.logsumexp(
+                processed_logits, axis=-1, keepdims=True
+            )
             # Sample the next token ID using the provided sampler function
             next_token_id = sampler(logprobs)
             # Return the sampled next token ID and the log probability distribution

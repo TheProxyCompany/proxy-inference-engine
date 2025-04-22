@@ -2,10 +2,10 @@ from collections.abc import Callable
 
 import mlx.core as mx
 
-from src.proxy_inference_engine.samplers.categorical import categorical_sampling
-from src.proxy_inference_engine.samplers.min_p import min_p_sampling
-from src.proxy_inference_engine.samplers.top_k import top_k_sampling
-from src.proxy_inference_engine.samplers.top_p import top_p_sampling
+from proxy_inference_engine.samplers.categorical import categorical_sampling
+from proxy_inference_engine.samplers.min_p import min_p_sampling
+from proxy_inference_engine.samplers.top_k import top_k_sampling
+from proxy_inference_engine.samplers.top_p import top_p_sampling
 
 
 def make_sampler(

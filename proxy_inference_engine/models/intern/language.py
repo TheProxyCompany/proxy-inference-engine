@@ -5,7 +5,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from proxy_inference_engine.cache.kv_cache import BaseCache
-from src.proxy_inference_engine.models.base import create_attention_mask
+from proxy_inference_engine.models.base import create_attention_mask
 
 
 @dataclass
@@ -93,9 +93,9 @@ class Attention(nn.Module):
 
         if mask is not None:
             mask = mask[..., : keys.shape[-2]]
-            assert (
-                mask is not None and mask.shape[-1] >= keys.shape[-2]
-            ), "Attention mask shorter than seq length"
+            assert mask is not None and mask.shape[-1] >= keys.shape[-2], (
+                "Attention mask shorter than seq length"
+            )
 
         queries = self.rotary_emb(queries, offset=offset)
         keys = self.rotary_emb(keys, offset=offset)

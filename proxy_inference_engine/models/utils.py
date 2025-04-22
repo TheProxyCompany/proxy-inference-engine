@@ -13,14 +13,10 @@ from transformers.models.auto.tokenization_auto import AutoTokenizer
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
-from src.proxy_inference_engine.utils import sanitize_weights
-
 logger = logging.getLogger(__name__)
 
 
-def load(
-    path_or_hf_repo: str,
-) -> tuple[nn.Module, PreTrainedTokenizer | PreTrainedTokenizerFast]:
+def load(path_or_hf_repo: str) -> tuple[nn.Module, PreTrainedTokenizer | PreTrainedTokenizerFast]:
     """
     Load the model and tokenizer from a given path or a huggingface repository.
 
@@ -50,23 +46,26 @@ def load_model(model_path: str) -> nn.Module:
         nn.Module: The loaded and initialized model.
     """
     path = get_model_path(model_path)
-    config = load_config(path)
+
     weight_files = glob.glob(str(path / "model*.safetensors"))
     weights = {}
     for wf in weight_files:
         weights.update(mx.load(wf))
 
-    architecture = get_model_architecture(config)
-    model_args = architecture.ModelArgs.from_dict(config)
-    model = architecture.Model(model_args)
+    with open(path / "config.json") as f:
+        model_config = json.load(f)
 
-    weights = sanitize_weights(model, weights, config)
+    architecture = get_model_architecture(model_config)
+    model_args = architecture.ModelArgs.from_dict(model_config)
+    model: nn.Module = architecture.Model(model_args)
+
+    weights = sanitize_weights(model, weights, model_config)
     if hasattr(architecture, "LanguageModel"):
-        weights = sanitize_weights(architecture.LanguageModel, weights, config)
+        weights = sanitize_weights(architecture.LanguageModel, weights, model_config)
     if hasattr(architecture, "VisionModel"):
-        weights = sanitize_weights(architecture.VisionModel, weights, config)
+        weights = sanitize_weights(architecture.VisionModel, weights, model_config)
 
-    if (quantization := config.get("quantization", None)) is not None:
+    if (quantization := model_config.get("quantization", None)) is not None:
         nn.quantize(model, **quantization)
 
     model.load_weights(list(weights.items()))
@@ -159,3 +158,15 @@ def get_model_path(path_or_hf_repo: str, revision: str | None = None) -> Path:
                 f"Model not found for path or HF repo: {path_or_hf_repo}."
             ) from e
     return model_path
+
+def sanitize_weights(
+    model_obj: nn.Module, weights: dict[str, mx.array], config=None
+) -> dict[str, mx.array]:
+    """Helper function to sanitize weights if the model has a sanitize method"""
+    if hasattr(model_obj, "sanitize"):
+        if config is not None:
+            model_obj = model_obj(config)
+        assert model_obj.sanitize is not None
+        weights = model_obj.sanitize(weights)
+
+    return weights

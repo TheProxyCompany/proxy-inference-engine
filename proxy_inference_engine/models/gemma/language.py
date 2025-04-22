@@ -6,7 +6,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from proxy_inference_engine.cache.kv_cache import BaseCache, KVCache, RotatingKVCache
-from src.proxy_inference_engine.models.base import create_attention_mask
+from proxy_inference_engine.models.base import create_attention_mask
 
 
 @dataclass
