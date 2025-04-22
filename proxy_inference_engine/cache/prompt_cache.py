@@ -103,7 +103,7 @@ class PromptCache:
             # Check if the cache file exists
             if not cache_path.exists():
                 logger.debug(f"No cache found for prompt hash {prompt_hash}")
-
+                return
             cache, metadata = BaseCache.load_cache(str(cache_path))
             computed_ids = json.loads(metadata["computed_ids"])
             assert isinstance(computed_ids, list)

@@ -1,19 +1,21 @@
 from collections.abc import Callable, Iterator
+from typing import Any
+
 from pse.structuring_engine import StructuringEngine
 
+from proxy_inference_engine.interaction.interaction import Interaction
 from proxy_inference_engine.tokenizer import Tokenizer
 from proxy_inference_engine.cache import PromptCache
 from proxy_inference_engine.models import load
 
 import logging
-from typing import Any
 
 import mlx.core as mx
 
 logger = logging.getLogger(__name__)
 
 
-class Engine:
+class InferenceEngine:
     def __init__(self, model_path: str):
         self.model, hf_tokenizer = load(model_path)
         self.tokenizer = Tokenizer(hf_tokenizer)
@@ -22,10 +24,9 @@ class Engine:
             hf_tokenizer, multi_token_sampling=True
         )
 
-    def run_inference(
+    def inference(
         self,
-        prompt: str | list[dict[str, Any]],
-        processed_token_ids: mx.array | None = None,
+        prompt: str | list[dict[str, Any]] | list[Interaction],
         **inference_kwargs,
     ):
         """
@@ -42,12 +43,7 @@ class Engine:
         }
         encoded_prompt = self.tokenizer.encode(**tokenizer_config)
 
-        # Try to load from cache first if caching is enabled
-        cache_system_prompt = inference_kwargs.get("cache_system_prompt", True)
-        reuse_prompt_cache = inference_kwargs.get("reuse_prompt_cache", True)
-
-        if cache_system_prompt and reuse_prompt_cache and not processed_token_ids:
-            self.prompt_cache.load_cached_prompt(encoded_prompt)
+        self.prompt_cache.load_cached_prompt(encoded_prompt)
 
         logger.info(f"PROMPT:\n{self.tokenizer.decode(encoded_prompt)}")
 
@@ -58,25 +54,14 @@ class Engine:
         mask: mx.array | None = None,
         sampler: Callable[[mx.array], mx.array] = (lambda x: mx.argmax(x, axis=-1)),
         logits_processors: list[Callable[[mx.array, mx.array], mx.array]] | None = None,
+        max_new_tokens: int = -1,
     ) -> Iterator[tuple[mx.array, mx.array]]:
         """
         Generates tokens autoregressively, yielding one token and its log probabilities per step.
 
-        Args:
-            prompt_ids: The initial sequence of token IDs to start generation from.
-            pixel_values: Optional pixel values for multi-modal models.
-            mask: Optional attention mask.
-            sampler: A function that takes log probabilities and returns a sampled token ID.
-                     Defaults to greedy sampling (argmax).
-            logits_processors: An optional list of functions to modify the logits before sampling.
-                               Each processor takes the current sequence of generated IDs and the logits.
-
         Yields:
-            Iterator[tuple[mx.array, mx.array]]: An iterator yielding tuples of
-            (next_token_id, log_probabilities_for_that_step).
+            tuples of (next_token_id, log_probabilities).
         """
-
-        CACHE_CLEAR_INTERVAL = 256  # Interval for clearing MLX's computation cache
 
         def _perform_inference_step(
             current_input_ids: mx.array,
@@ -99,13 +84,13 @@ class Engine:
             current_token_history = self.prompt_cache.computed_ids
             for processor in logits_processors or []:
                 processed_logits = processor(current_token_history, processed_logits)
+
             # Calculate log probabilities (log-softmax normalization)
             logprobs = processed_logits - mx.logsumexp(
                 processed_logits, axis=-1, keepdims=True
             )
             # Sample the next token ID using the provided sampler function
             next_token_id = sampler(logprobs)
-            # Return the sampled next token ID and the log probability distribution
             return next_token_id, logprobs.squeeze(0)
 
         # Get the tokens that need to be processed
@@ -115,7 +100,7 @@ class Engine:
         mx.async_eval(next_token_id, current_logprobs)
 
         step_count = 0
-        while True:
+        while max_new_tokens == -1 or step_count < max_new_tokens:
             if step_count == 0:
                 # Synchronize computation for the first token
                 mx.eval(next_token_id)
@@ -129,5 +114,5 @@ class Engine:
 
             step_count += 1
             # Periodically clear the MLX computation graph cache to prevent excessive memory growth.
-            if step_count % CACHE_CLEAR_INTERVAL == 0:
+            if step_count % 256 == 0:
                 mx.clear_cache()

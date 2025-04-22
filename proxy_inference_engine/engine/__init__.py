@@ -1,3 +1,3 @@
-from proxy_inference_engine.engine.inference_engine import Engine
+from proxy_inference_engine.engine.inference_engine import InferenceEngine
 
-__all__ = ["Engine"]
+__all__ = ["InferenceEngine"]
