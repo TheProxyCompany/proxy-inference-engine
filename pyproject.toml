@@ -30,6 +30,7 @@ dependencies = [
     "requests",
     "transformers",
     "huggingface-hub",
+    "fastapi[standard]",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +49,7 @@ dev = [
 "Documentation" = "https://github.com/TheProxyCompany/proxy-inference-engine"
 
 [tool.setuptools]
+package-dir = {"" = "src"}
 include-package-data = true
 
 [tool.black]
