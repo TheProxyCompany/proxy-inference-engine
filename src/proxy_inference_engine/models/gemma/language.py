@@ -1,16 +1,19 @@
-import inspect
-from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
+from pydantic import BaseModel
 
 from proxy_inference_engine.cache.kv_cache import BaseCache, KVCache, RotatingKVCache
 from proxy_inference_engine.models.base import create_attention_mask
 
 
-@dataclass
-class TextConfig:
+class RopeScaling(BaseModel):
+    factor: float
+    rope_type: str
+
+class TextConfig(BaseModel):
     model_type: str
     hidden_size: int
     num_hidden_layers: int
@@ -25,19 +28,28 @@ class TextConfig:
     rope_traditional: bool = False
     query_pre_attn_scalar: float = 0.0625
     sliding_window: int = 1024
-    rope_scaling: dict[str, float | list[float]] | None = None
+    rope_scaling: RopeScaling | None = None
     mm_tokens_per_image: int = 256
     sliding_window_pattern: int = 6
+    pad_token_id: int | None = None
 
-    @classmethod
-    def from_dict(cls, params):
-        return cls(
-            **{
-                k: v
-                for k, v in params.items()
-                if k in inspect.signature(cls).parameters
-            }
-        )
+@partial(mx.compile, shapeless=True)
+def clip_residual(x: mx.array, y: mx.array | None = None) -> mx.array:
+    bound = mx.finfo(mx.float16).max
+
+    if y is None:
+        if x.dtype == mx.float16:
+            return mx.clip(x.astype(mx.float32), -bound, bound).astype(mx.float16)
+
+        else:
+            return x
+
+    if x.dtype != mx.float16:
+        return x + y
+
+    return mx.clip(
+        x.astype(mx.float32) + y.astype(mx.float32), -bound, bound
+    ).astype(mx.float16)
 
 
 class RMSNorm(nn.Module):
@@ -154,40 +166,19 @@ class TransformerBlock(nn.Module):
         mask: mx.array | None = None,
         cache: Any | None = None,
     ) -> mx.array:
-        # Clip the input to avoid overflow in float16
-        # Float16 has a max value of 65504. When values exceed this limit, they become inf.
-        # Example: If x contains 70000.0 in float16, it becomes inf, causing gradient issues.
-        # We upcast to float32 for operations that might exceed the limit, then clip and
-        # convert back to float16 to maintain numerical stability.
-
-        # Clip input to avoid overflow in float16
-        x = mx.clip(x, -65504, 65504) if x.dtype == mx.float16 else x
+        x = clip_residual(x)
 
         # Self-attention block
         r = self.self_attn(self.input_layernorm(x), mask, cache)
         h = self.post_attention_layernorm(r)
 
-        # Add residual connection with overflow protection for float16
-        if h.dtype == mx.float16:
-            h = mx.clip(
-                x.astype(mx.float32) + h.astype(mx.float32), -65504, 65504
-            ).astype(mx.float16)
-        else:
-            h = x + h
+        h = clip_residual(x + h)
 
         # MLP block
         r = self.mlp(self.pre_feedforward_layernorm(h))
         out = self.post_feedforward_layernorm(r)
 
-        # Add residual connection with overflow protection for float16
-        if out.dtype == mx.float16:
-            out = mx.clip(
-                h.astype(mx.float32) + out.astype(mx.float32), -65504, 65504
-            ).astype(mx.float16)
-        else:
-            out = h + out
-
-        return out
+        return clip_residual(h + out)
 
 
 class Gemma3Model(nn.Module):
@@ -247,8 +238,7 @@ class LanguageModel(nn.Module):
     def __init__(self, config: TextConfig):
         super().__init__()
         self.config = config
-        self.model_type = config.model_type
-        self.model = Gemma3Model(config)
+        self.model = Gemma3Model(self.config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
     def __call__(

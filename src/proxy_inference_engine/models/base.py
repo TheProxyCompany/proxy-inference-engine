@@ -1,30 +1,25 @@
-import inspect
-from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import mlx.core as mx
 from mlx.utils import tree_map
+from pydantic import BaseModel, ConfigDict
 
 from proxy_inference_engine.cache.kv_cache import QuantizedKVCache
 
 
-@dataclass
-class BaseModelArgs:
-    @classmethod
-    def from_dict(cls, params):
-        return cls(
-            **{
-                k: v
-                for k, v in params.items()
-                if k in inspect.signature(cls).parameters
-            }
-        )
+class BaseModelArgs(BaseModel):
+    """
+    Base configuration class for models, leveraging Pydantic for robust
+    type validation and settings management.
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
 def create_causal_mask(
     N: int,
     offset: int = 0,
-    window_size: Optional[int] = None,
-    lengths: Optional[mx.array] = None,
+    window_size: int | None = None,
+    lengths: mx.array | None = None,
 ):
     rinds = mx.arange(offset + N)
     linds = mx.arange(offset, offset + N) if offset else rinds
@@ -39,7 +34,7 @@ def create_causal_mask(
     return mask * -1e9
 
 
-def create_attention_mask(h: mx.array, cache: Optional[Any] = None):
+def create_attention_mask(h: mx.array, cache: Any | None = None):
     T = h.shape[1]
     if T > 1:
         window_size = None
@@ -63,7 +58,7 @@ def quantized_scaled_dot_product_attention(
     q_keys: tuple[mx.array, mx.array, mx.array],
     q_values: tuple[mx.array, mx.array, mx.array],
     scale: float,
-    mask: Optional[mx.array],
+    mask: mx.array | None,
     group_size: int = 64,
     bits: int = 8,
 ) -> mx.array:
@@ -100,7 +95,7 @@ def scaled_dot_product_attention(
     values,
     cache,
     scale: float,
-    mask: Optional[mx.array],
+    mask: mx.array | None,
 ) -> mx.array:
     if isinstance(cache, QuantizedKVCache):
         return quantized_scaled_dot_product_attention(

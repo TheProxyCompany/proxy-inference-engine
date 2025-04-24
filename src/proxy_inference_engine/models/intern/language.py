@@ -1,15 +1,12 @@
-import inspect
-from dataclasses import dataclass
-
 import mlx.core as mx
 import mlx.nn as nn
+from pydantic import BaseModel
 
 from proxy_inference_engine.cache.kv_cache import BaseCache
 from proxy_inference_engine.models.base import create_attention_mask
 
 
-@dataclass
-class TextConfig:
+class TextConfig(BaseModel):
     model_type: str
     hidden_size: int
     num_hidden_layers: int
@@ -35,17 +32,6 @@ class TextConfig:
 
             if self.rope_scaling["type"] not in ["mrope", "default"]:
                 raise ValueError("rope_scaling type must be 'mrope' or 'default'")
-
-    @classmethod
-    def from_dict(cls, params):
-        return cls(
-            **{
-                k: v
-                for k, v in params.items()
-                if k in inspect.signature(cls).parameters
-            }
-        )
-
 
 class Attention(nn.Module):
     def __init__(self, args: TextConfig):

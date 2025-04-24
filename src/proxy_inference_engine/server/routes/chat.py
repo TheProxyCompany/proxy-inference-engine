@@ -1,12 +1,13 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from proxy_inference_engine.engine import InferenceEngine
 from proxy_inference_engine.interaction import (
     Interaction,
     Role,
 )
+from proxy_inference_engine.server.app import get_inference_engine
 from proxy_inference_engine.server.exceptions import InferenceError
 from proxy_inference_engine.server.models.chat import (
     CompletionChoice,
@@ -27,7 +28,7 @@ chat_router = APIRouter()
 )
 async def handle_completion_request(
     request: CompletionRequest,
-    engine: InferenceEngine,
+    engine: InferenceEngine = Depends(get_inference_engine),  # noqa: B008
 ) -> CompletionResponse:
     """
     Handles requests to the `/completions` endpoint.

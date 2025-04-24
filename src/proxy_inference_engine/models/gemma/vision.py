@@ -1,12 +1,9 @@
-import inspect
-from dataclasses import dataclass
-
 import mlx.core as mx
 import mlx.nn as nn
+from pydantic import BaseModel
 
 
-@dataclass
-class VisionConfig:
+class VisionConfig(BaseModel):
     model_type: str
     num_hidden_layers: int
     hidden_size: int
@@ -16,16 +13,6 @@ class VisionConfig:
     image_size: int = 224
     num_channels: int = 3
     layer_norm_eps: float = 1e-6
-
-    @classmethod
-    def from_dict(cls, params):
-        return cls(
-            **{
-                k: v
-                for k, v in params.items()
-                if k in inspect.signature(cls).parameters
-            }
-        )
 
 
 def check_array_shape(arr):
@@ -234,10 +221,6 @@ class SigLipVisionModel(nn.Module):
 class VisionModel(nn.Module):
     def __init__(self, config: VisionConfig):
         super().__init__()
-        self.model_type = config.model_type
-        if self.model_type not in ["siglip_vision_model", "gemma3", "gemma3_vision"]:
-            raise ValueError(f"Unsupported model type: {self.model_type}")
-
         self.vision_model = SigLipVisionModel(config)
 
     def __call__(

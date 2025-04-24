@@ -1,13 +1,11 @@
-import inspect
-from dataclasses import dataclass, field
 from typing import cast
 
 import mlx.core as mx
 import mlx.nn as nn
+from pydantic import BaseModel
 
 
-@dataclass
-class VisionConfig:
+class VisionConfig(BaseModel):
     depth: int = 32
     hidden_size: int = 1280
     intermediate_size: int = 3420
@@ -24,17 +22,7 @@ class VisionConfig:
     tokens_per_second: int = 2
     temporal_patch_size: int = 2
     window_size: int = 112
-    fullatt_block_indexes: list[int] = field(default_factory=lambda: [7, 15, 23, 31])
-
-    @classmethod
-    def from_dict(cls, params):
-        return cls(
-            **{
-                k: v
-                for k, v in params.items()
-                if k in inspect.signature(cls).parameters
-            }
-        )
+    fullatt_block_indexes: list[int]
 
 
 def check_array_shape(arr):
@@ -443,7 +431,7 @@ class VisionModel(nn.Module):
 
             if output_hidden_states:
                 # Ensure encoder_states is always a tuple
-                encoder_states = encoder_states + (hidden_states,)
+                encoder_states = (*encoder_states, hidden_states)
 
         hidden_states = self.merger(hidden_states)
         reverse_indices = mx.argsort(window_index, axis=0)

@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    MODEL_PATH_MVP: str = "YOUR_MODEL_PATH_HERE"
+    MODEL_PATH: str = "mlx-community/gemma-3-12b-it-qat-4bit"
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 

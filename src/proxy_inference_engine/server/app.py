@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from proxy_inference_engine.engine import InferenceEngine
 from proxy_inference_engine.server.config import load_settings
+from proxy_inference_engine.server.dependencies import get_inference_engine
 from proxy_inference_engine.server.exceptions import InferenceError
 from proxy_inference_engine.server.routes.chat import chat_router
 
@@ -15,16 +16,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global variable to hold the engine
+inference_engine: InferenceEngine | None = None
 
 # --- Application Setup ---
 def create_app() -> FastAPI:
+    global inference_engine
+
     logger.info("Starting application setup...")
     settings = load_settings()
-    logger.info(f"Settings loaded. Model path (MVP): {settings.MODEL_PATH_MVP}")
+    logger.info(f"Settings loaded. Model path: {settings.MODEL_PATH}")
 
     try:
-        logger.info(f"Loading InferenceEngine from: {settings.MODEL_PATH_MVP}")
-        inference_engine = InferenceEngine(settings.MODEL_PATH_MVP)
+        logger.info(f"Loading InferenceEngine from: {settings.MODEL_PATH}")
+        inference_engine = InferenceEngine(settings.MODEL_PATH)
         logger.info("InferenceEngine loaded successfully.")
     except Exception as e:
         logger.exception(f"FATAL: Failed to load InferenceEngine: {e}", exc_info=True)
@@ -40,6 +45,13 @@ def create_app() -> FastAPI:
         description="A server for the Proxy Inference Engine.",
         version="0.1.0",
     )
+
+    def _get_loaded_engine() -> InferenceEngine:
+        if inference_engine is None:
+            raise RuntimeError("Inference engine not initialized")
+        return inference_engine
+
+    app.dependency_overrides[get_inference_engine] = _get_loaded_engine
 
     # --- Exception Handlers ---
     @app.exception_handler(InferenceError)

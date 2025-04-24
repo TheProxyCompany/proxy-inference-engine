@@ -1,5 +1,3 @@
-import inspect
-
 import mlx.core as mx
 import mlx.nn as nn
 
@@ -20,17 +18,7 @@ class ModelArgs(BaseModelArgs):
     vocab_size: int = 257152
     image_token_index: int = 257152
     hidden_size: int = 2048
-    pad_token_id: int = 0
-
-    @classmethod
-    def from_dict(cls, params):
-        return cls(
-            **{
-                k: v
-                for k, v in params.items()
-                if k in inspect.signature(cls).parameters
-            }
-        )
+    pad_token_id: int | None = 0
 
 
 class Gemma3MultiModalProjector(nn.Module):
@@ -84,7 +72,6 @@ class Gemma3MultiModalProjector(nn.Module):
 class Model(nn.Module):
     def __init__(self, config: ModelArgs):
         super().__init__()
-        self.model_type = config.model_type
         self.config = config
 
         self.vision_tower = VisionModel(config.vision_config)

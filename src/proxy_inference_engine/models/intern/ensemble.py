@@ -1,6 +1,7 @@
+from typing import cast
+
 import mlx.core as mx
 import mlx.nn as nn
-from typing import cast
 
 from proxy_inference_engine.cache.kv_cache import BaseCache
 from proxy_inference_engine.models.base import BaseModelArgs
@@ -20,12 +21,6 @@ class ModelArgs(BaseModelArgs):
     vision_feature_select_strategy: str = "default"
     vision_feature_layer: int = -2
     vocab_size: int = 32000
-
-    @classmethod
-    def from_dict(cls, params):
-        p = params.copy()
-        p["text_config"] = {k: v for k, v in p.items() if k not in {"vision_config"}}
-        return cls(**{k: v for k, v in p.items() if k in cls.__annotations__})
 
 
 class Model(nn.Module):

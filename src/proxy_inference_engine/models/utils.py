@@ -16,7 +16,9 @@ from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 logger = logging.getLogger(__name__)
 
 
-def load(path_or_hf_repo: str) -> tuple[nn.Module, PreTrainedTokenizer | PreTrainedTokenizerFast]:
+def load(
+    path_or_hf_repo: str,
+) -> tuple[nn.Module, PreTrainedTokenizer | PreTrainedTokenizerFast]:
     """
     Load the model and tokenizer from a given path or a huggingface repository.
 
@@ -56,17 +58,44 @@ def load_model(model_path: str) -> nn.Module:
         model_config = json.load(f)
 
     architecture = get_model_architecture(model_config)
-    model_args = architecture.ModelArgs.from_dict(model_config)
+    model_args = architecture.ModelArgs(**model_config)
     model: nn.Module = architecture.Model(model_args)
 
-    weights = sanitize_weights(model, weights, model_config)
-    if hasattr(architecture, "LanguageModel"):
-        weights = sanitize_weights(architecture.LanguageModel, weights, model_config)
-    if hasattr(architecture, "VisionModel"):
-        weights = sanitize_weights(architecture.VisionModel, weights, model_config)
+    if hasattr(model, "sanitize") and model.sanitize is not None:
+        weights = model.sanitize(weights)
 
-    if (quantization := model_config.get("quantization", None)) is not None:
-        nn.quantize(model, **quantization)
+    if (
+        hasattr(model, "language_model")
+        and model.language_model is not None
+        and hasattr(model.language_model, "sanitize")
+        and model.language_model.sanitize is not None
+    ):
+        weights = model.language_model.sanitize(weights)
+    if (
+        hasattr(model, "vision_tower")
+        and model.vision_tower is not None
+        and hasattr(model.vision_tower, "sanitize")
+        and model.vision_tower.sanitize is not None
+    ):
+        weights = model.vision_tower.sanitize(weights)
+
+    # Quantization
+    quantization: dict[str, Any] = model_config.get("quantization", {})
+    if quantization:
+
+        def should_quantize(path: str, module: nn.Module) -> bool:
+            valid_weights = (
+                hasattr(module, "weight")
+                and module.weight is not None
+                and module.weight.shape[-1] % 64 == 0
+            )
+            return (
+                hasattr(module, "to_quantized")
+                and valid_weights
+                and f"{path}.scales" in weights
+            )
+
+        nn.quantize(model, **quantization, class_predicate=should_quantize)
 
     model.load_weights(list(weights.items()))
     assert isinstance(model, nn.Module)
@@ -87,6 +116,7 @@ def get_model_architecture(config: dict[str, Any]) -> ModuleType:
     """
     model_type = config["model_type"]
     model_type = {
+        "gemma3": "gemma",
         "mistral": "llama",
         "phi-msft": "phixtral",
         "falcon_mamba": "mamba",
@@ -94,13 +124,15 @@ def get_model_architecture(config: dict[str, Any]) -> ModuleType:
     }.get(model_type, model_type)
 
     try:
-        architecture = importlib.import_module(f"proxy_inference_engine.models.{model_type}")
+        architecture = importlib.import_module(
+            f"proxy_inference_engine.models.{model_type}"
+        )
         return architecture
-    except ImportError:
+    except ModuleNotFoundError:
         try:
             architecture = importlib.import_module(f"mlx_lm.models.{model_type}")
             return architecture
-        except ImportError as e:
+        except ModuleNotFoundError as e:
             msg = f"Model type {model_type} not supported."
             logging.error(msg)
             raise ValueError(
@@ -159,13 +191,13 @@ def get_model_path(path_or_hf_repo: str, revision: str | None = None) -> Path:
             ) from e
     return model_path
 
+
 def sanitize_weights(
-    model_obj: nn.Module, weights: dict[str, mx.array], config=None
+    model_obj: nn.Module,
+    weights: dict[str, mx.array],
 ) -> dict[str, mx.array]:
     """Helper function to sanitize weights if the model has a sanitize method"""
     if hasattr(model_obj, "sanitize"):
-        if config is not None:
-            model_obj = model_obj(config)
         assert model_obj.sanitize is not None
         weights = model_obj.sanitize(weights)
 
