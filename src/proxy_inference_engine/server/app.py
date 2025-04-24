@@ -53,7 +53,6 @@ def create_app() -> FastAPI:
 
     app.dependency_overrides[get_inference_engine] = _get_loaded_engine
 
-    # --- Exception Handlers ---
     @app.exception_handler(InferenceError)
     async def inference_exception_handler(request: Request, exc: InferenceError):
         logger.error(f"Caught InferenceError: {exc}", exc_info=True)

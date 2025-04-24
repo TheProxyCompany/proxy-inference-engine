@@ -10,6 +10,5 @@ if __name__ == "__main__":
         "proxy_inference_engine.server.app:app",
         host=settings.HOST,
         port=settings.PORT,
-        reload=True,
         log_level="info",
     )
