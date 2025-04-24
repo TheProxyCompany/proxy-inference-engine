@@ -59,19 +59,19 @@ class ChatCompletionRequest(BaseModel):
         le=2.0,
         description="Controls randomness via sampling temperature.",
     )
-    top_p: float = Field(
+    top_p: float | None = Field(
         default=1.0,
         ge=0.0,
         le=1.0,
         description="Implements nucleus sampling.",
     )
-    top_k: int = Field(
+    top_k: int | None = Field(
         default=50,
         ge=1,
         le=100,
         description="Controls the number of tokens considered at each step.",
     )
-    min_p: float = Field(
+    min_p: float | None = Field(
         default=0.0,
         ge=0.0,
         le=1.0,

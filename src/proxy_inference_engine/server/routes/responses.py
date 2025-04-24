@@ -47,6 +47,10 @@ async def handle_response_request(
         "max_completion_tokens": request.max_output_tokens,
         "temperature": request.temperature,
         "top_p": request.top_p,
+        "parallel_tool_calls": request.parallel_tool_calls,
+        "tool_choice": request.tool_choice,
+        "tools": request.tools,
+        "text": request.text,
     }
     inference_kwargs = {k: v for k, v in inference_kwargs.items() if v is not None}
 
