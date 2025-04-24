@@ -32,7 +32,7 @@ class InferenceEngine:
         """
         Configure the inference engine.
         """
-        
+        pass
 
 
     async def __call__(

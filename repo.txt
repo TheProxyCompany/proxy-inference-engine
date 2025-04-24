@@ -1,0 +1,5729 @@
+src/proxy_inference_engine/__init__.py
+---
+from proxy_inference_engine.engine import InferenceEngine
+
+__all__ = ["InferenceEngine"]
+
+
+---
+src/proxy_inference_engine/logits_processors/__init__.py
+---
+from proxy_inference_engine.logits_processors.repetition import (
+    make_repetition_penalty as repetition_penalty_logits_processor,
+)
+
+__all__ = ["repetition_penalty_logits_processor"]
+
+
+---
+src/proxy_inference_engine/logits_processors/repetition.py
+---
+from collections.abc import Callable
+
+import mlx.core as mx
+
+
+def make_repetition_penalty(penalty: float = 1.0, context_size: int = 60) -> Callable[[mx.array, mx.array], mx.array]:
+
+    if penalty < 0 or context_size < 0:
+        raise ValueError(f"Parameters must be non-negative, got penalty={penalty} and context_size={context_size}")
+
+    def repetition_penalty_processor(tokens: mx.array, logits: mx.array) -> mx.array:
+        if len(tokens) > 0:
+            tokens = tokens[-context_size:]
+            selected_logits = logits[:, tokens]
+            selected_logits = mx.where(
+                selected_logits < 0,
+                selected_logits * penalty,
+                selected_logits / penalty,
+                stream=mx.cpu
+            )
+            logits[:, tokens] = selected_logits
+        return logits
+
+    return repetition_penalty_processor
+
+
+---
+src/proxy_inference_engine/cache/__init__.py
+---
+from proxy_inference_engine.cache.kv_cache import KVCache, QuantizedKVCache, ReusableKVCache, RotatingKVCache
+from proxy_inference_engine.cache.prompt_cache import PromptCache
+
+__all__ = [
+    "KVCache",
+    "QuantizedKVCache",
+    "ReusableKVCache",
+    "RotatingKVCache",
+    "PromptCache",
+]
+
+
+---
+src/proxy_inference_engine/cache/prompt_cache.py
+---
+import hashlib
+import json
+import logging
+import pathlib
+
+import mlx.core as mx
+import mlx.nn as nn
+
+from proxy_inference_engine.cache.kv_cache import BaseCache, ReusableKVCache
+
+logger = logging.getLogger(__name__)
+
+class PromptCache:
+    """
+    A class for caching system prompts and KV caches.
+
+    This class provides methods for caching system prompts and KV caches to a file,
+    as well as loading cached system prompts from a file.
+    """
+
+    def __init__(
+        self,
+        directory: str | pathlib.Path | None = None,
+        cache: list[BaseCache] | None = None,
+        computed_ids: mx.array | None = None,
+    ):
+        self.cache_directory = self._get_cache_directory(directory)
+        self.cache: list[BaseCache] = cache or []
+        self.computed_ids: mx.array = computed_ids or mx.array([])
+
+    def __call__(self, prompt_ids: mx.array) -> mx.array:
+        return self.reuse_cache(prompt_ids)
+
+    def create_kv_cache(self, model: nn.Module) -> None:
+        if hasattr(model, "make_cache") and callable(model.make_cache):
+            self.cache = model.make_cache()
+            return
+
+        assert hasattr(model, "layers") and isinstance(model.layers, list), "Model must have a layers attribute"
+        layer_count = len(model.layers)
+        self.cache = [ReusableKVCache() for _ in range(layer_count)]
+
+    def update(self, prompt_ids: mx.array) -> None:
+        """
+        Update the cache with the given prompt IDs.
+        """
+        if self.computed_ids.size == 0:
+            self.computed_ids = prompt_ids
+        else:
+            self.computed_ids = mx.concat([self.computed_ids, prompt_ids])
+
+    def reuse_cache(
+        self,
+        prompt_ids: mx.array,
+    ) -> mx.array:
+        """
+        Reuse the cache for the given prompt and precomputed ids.
+        """
+
+        if not self.cache or self.computed_ids.size == 0:
+            return prompt_ids
+
+        common_prefix = 0
+        for i, id in enumerate(self.computed_ids):
+            if i >= len(prompt_ids) - 1 or prompt_ids[i] != id:
+                break
+            common_prefix += 1
+
+        if common_prefix == 0:
+            return prompt_ids
+
+        for layer_cache in self.cache:
+            assert isinstance(layer_cache, ReusableKVCache)
+            layer_cache.reuse(len(prompt_ids), common_prefix)
+
+        return prompt_ids[common_prefix:]
+
+    def cache_prompt(self) -> None:
+        """
+        Cache the prompt token IDs and KV cache to a file.
+
+        Args:
+            token_ids (mx.array): The token IDs to cache.
+        """
+        try:
+            # Get the cache directory and compute the hash
+            prompt_hash = self._compute_prompt_hash(self.computed_ids)
+            cache_path = self.cache_directory / f"{prompt_hash}.safetensors"
+            # Save the cache
+            BaseCache.save_cache(
+                str(cache_path),
+                self.cache,
+                {"computed_ids": json.dumps(self.computed_ids.tolist())}
+            )
+            logger.debug(f"Cached system prompt to {cache_path}")
+        except Exception as e:
+            logger.error(f"Failed to cache system prompt: {e}")
+
+    def load_cached_prompt(self, token_ids: mx.array) -> None:
+        """
+        Load a cached prompt if available.
+
+        Args:
+            token_ids (mx.array): The token IDs to look up in the cache.
+
+        Returns:
+            Optional[tuple[list[BaseCache], mx.array]]: The cached token IDs and KV cache if available, None otherwise.
+        """
+
+        try:
+            # Get the cache directory and compute the hash
+            prompt_hash = self._compute_prompt_hash(token_ids)
+            cache_path = self.cache_directory / f"{prompt_hash}.safetensors"
+            # Check if the cache file exists
+            if not cache_path.exists():
+                logger.debug(f"No cache found for prompt hash {prompt_hash}")
+                return
+            cache, metadata = BaseCache.load_cache(str(cache_path))
+            computed_ids = json.loads(metadata["computed_ids"])
+            assert isinstance(computed_ids, list)
+            self.computed_ids = mx.array(computed_ids)
+            self.cache = cache
+
+        except Exception as e:
+            logger.error(f"Failed to load cached system prompt: {e}")
+
+    def _get_cache_directory(self, directory: str | pathlib.Path | None = None) -> pathlib.Path:
+        """
+        Get the cache directory path, creating it if it doesn't exist.
+
+        Args:
+            directory (str | pathlib.Path | None): The directory to use for the cache.
+
+        Returns:
+            pathlib.Path: The path to the cache directory.
+        """
+        if isinstance(directory, str):
+            directory = pathlib.Path(directory)
+
+        if isinstance(directory, pathlib.Path):
+            return directory
+
+        module_dir = pathlib.Path(__file__).parent.absolute()
+        cache_dir = module_dir / ".cache"
+
+        # Create the cache directory if it doesn't exist
+        if not cache_dir.exists():
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Created cache directory at {cache_dir}")
+
+        return cache_dir
+
+    def _compute_prompt_hash(self, token_ids: mx.array) -> str:
+        """
+        Compute a hash of the token IDs to use as the cache key.
+
+        This function creates a deterministic hash by taking the first half of the token sequence
+        and converting it to a JSON string before hashing.
+
+        Args:
+            token_ids (mx.array): The token IDs to hash.
+
+        Returns:
+            str: A hexadecimal hash digest.
+        """
+        hash_obj = hashlib.sha256(str(token_ids.tolist()).encode())
+        return hash_obj.hexdigest()
+
+
+---
+src/proxy_inference_engine/cache/kv_cache/__init__.py
+---
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+import mlx.core as mx
+import mlx.nn as nn
+from mlx.utils import tree_flatten, tree_unflatten
+
+
+class BaseCache(ABC):
+    """
+    Abstract base class for transformer caching mechanisms.
+
+    This class defines the interface that all cache implementations must adhere to.
+    Subclasses should override these methods to provide specific caching behaviors
+    for different use cases (e.g., standard KV caching, quantized caching, rotating caches).
+    """
+
+    offset: int
+    step: int
+
+    @staticmethod
+    def make_kv_cache(
+        model: nn.Module,
+        max_kv_size: int | None = None,
+        reusable: bool = False,
+    ) -> list[BaseCache]:
+        """
+        Construct the model's key-value cache for use during generation.
+
+        This function will defer the cache construction to the model if it has a
+        ``make_cache`` method, otherwise it will make a default KV cache.
+
+        Args:
+            model (nn.Module): The language model.
+            max_kv_size (Optional[int]): If provided and the model does not have a
+                ``make_cache`` method, a ``RotatingKVCache`` is used with a maximum
+                size of ``max_kv_size``
+        """
+        if hasattr(model, "make_cache") and model.make_cache is not None:
+            return model.make_cache()
+
+        num_layers = len(model.layers) if model.layers else 0
+        if max_kv_size is not None:
+            return [
+                RotatingKVCache(max_size=max_kv_size, keep=4) for _ in range(num_layers)
+            ]
+        elif reusable:
+            return [ReusableKVCache() for _ in range(num_layers)]
+        else:
+            return [KVCache() for _ in range(num_layers)]
+
+    @property
+    def state(self):
+        """
+        Get the current state of the cache.
+
+        Returns:
+            An empty list by default, indicating no state is maintained.
+            Subclasses should override to return their specific state representation.
+        """
+        return []
+
+    @state.setter
+    def state(self, v):
+        """
+        Set the state of the cache.
+
+        Args:
+            v: The state to set.
+
+        Raises:
+            ValueError: If attempting to set a state on a cache that doesn't support it.
+        """
+        if v is not None and v:
+            raise ValueError("This cache has no state but a state was set.")
+
+    @property
+    def meta_state(self):
+        """
+        Get metadata about the cache state.
+
+        Returns:
+            An empty string by default. Subclasses should override to return
+            relevant metadata about their cache implementation.
+        """
+        return ""
+
+    @meta_state.setter
+    def meta_state(self, v):
+        """
+        Set metadata about the cache state.
+
+        Args:
+            v: The metadata to set.
+
+        Raises:
+            ValueError: If attempting to set metadata on a cache that doesn't support it.
+        """
+        if v is not None and v:
+            raise ValueError("This cache has no meta_state but a meta_state was set.")
+
+    def is_trimmable(self):
+        """
+        Check if this cache supports trimming operations.
+
+        Returns:
+            False by default. Subclasses should override to return True if they
+            support trimming operations to manage cache size.
+        """
+        return False
+
+    @abstractmethod
+    def trim(self, n: int) -> int:
+        """
+        Trim the cache by a specified number of tokens.
+
+        Args:
+            n: The number of tokens to trim.
+
+        Returns:
+            The number of tokens actually trimmed.  Subclasses should implement
+            the specific trimming logic.
+
+        Raises:
+            NotImplementedError: If not implemented by subclasses.
+        """
+        raise NotImplementedError("Subclasses must implement trim")
+
+    @abstractmethod
+    def update_and_fetch(
+        self, keys: mx.array, values: mx.array
+    ) -> tuple[mx.array, mx.array]:
+        """
+        Update the cache and fetch the current state.
+
+        Args:
+            keys: The new keys to add to the cache.
+            values: The new values to add to the cache.
+
+        Returns:
+            The updated keys and values from the cache. Subclasses should
+            implement the specific update and retrieval logic.
+
+        Raises:
+            NotImplementedError: If not implemented by subclasses.
+        """
+        raise NotImplementedError("Subclasses must implement update_and_fetch")
+
+    @abstractmethod
+    def to_quantized(self, group_size: int = 64, bits: int = 4) -> BaseCache:
+        """Convert to a quantized representation.
+
+        Args:
+            group_size: elements per group
+            bits: number of bits per weight
+
+        Raises:
+            NotImplementedError: If not implemented by subclasses.
+        """
+        raise NotImplementedError("Subclasses must implement to_quantized")
+
+    @staticmethod
+    def save_cache(
+        file_name: str,
+        cache: list[BaseCache],
+        metadata: dict[str, str] | None = None,
+    ):
+        """
+        Save a pre-computed key-value cache to a file.
+
+        Args:
+            file_name (str): The ``.safetensors`` file name.
+            cache (List[BaseCache]): The model's KV cache.
+            metadata (Dict[str, str]): Optional metadata to save along with model
+                state.
+        """
+        metadata = metadata or {}
+        cache_data = [c.state for c in cache]
+        cache_info = [c.meta_state for c in cache]
+        cache_data = dict(tree_flatten(cache_data))
+        cache_classes = [type(c).__name__ for c in cache]
+        cache_metadata = [cache_info, metadata, cache_classes]
+        cache_metadata = dict(tree_flatten(cache_metadata))
+        mx.save_safetensors(file_name, cache_data, cache_metadata)
+
+    @staticmethod
+    def load_cache(file_name: str) -> tuple[list[BaseCache], dict[str, str]]:
+        """
+        Load a key-value cache from a file.
+
+        Args:
+            file_name (str): The ``.safetensors`` file name.
+            return_metadata (bool): Whether to return metadata. Default: ``False``.
+
+        Returns:
+            List[BaseCache] or Tuple[List[BaseCache], Dict[str, str]]: The key-value cache and
+                the metadata if requested.
+        """
+        arrays, cache_metadata = mx.load(file_name, return_metadata=True)
+        arrays = tree_unflatten(list(arrays.items()))
+        cache_metadata = tree_unflatten(list(cache_metadata.items()))
+        info, metadata, classes = cache_metadata
+        cache = [globals()[c]() for c in classes]
+        for c, state, meta_state in zip(cache, arrays, info):
+            assert isinstance(c, BaseCache)
+            c.state = state
+            c.meta_state = meta_state
+  
+        return cache, metadata
+
+    @staticmethod
+    def can_trim(cache: list[BaseCache]) -> bool:
+        """
+        Check if model's key-value cache can be trimmed.
+
+        Args:
+            cache (List[BaseCache]): The model's key-value cache.
+
+        Returns:
+            bool: True if all caches in the list are trimmable.
+        """
+        return all(c.is_trimmable() for c in cache)
+
+    @staticmethod
+    def trim_cache(cache: list[BaseCache], num_tokens: int) -> int:
+        """
+        Trim the model's key-value cache by the given number of tokens.
+
+        Args:
+            cache (List[BaseCache]): The model's key-value cache.
+            num_tokens (int): The number of tokens to trim.
+
+        Returns:
+            int: The number of tokens that were trimmed.
+        """
+        if not BaseCache.can_trim(cache) or len(cache) == 0:
+            return 0
+        return next(c.trim(num_tokens) for c in cache)
+
+    @staticmethod
+    def maybe_quantize(
+        cache: list[BaseCache],
+        quantized_start: int,
+        group_size: int,
+        bits: int | None,
+    ):
+        """
+        Quantize the key-value cache if conditions are met.
+
+        Args:
+            cache (list[BaseCache]): The model's key-value cache.
+            quantized_start (int): Token position after which to start quantization.
+            group_size (int): Number of elements per quantization group.
+            bits (int | None): Number of bits for quantization (4 or 8).
+                If None, no quantization is performed.
+        """
+        if (
+            bits is not None
+            and not isinstance(cache[0], QuantizedKVCache)
+            and cache[0].offset > quantized_start
+        ):
+            for i in range(len(cache)):
+                if isinstance(cache[i], BaseCache):
+                    cache[i] = cache[i].to_quantized(group_size=group_size, bits=bits)
+
+
+from proxy_inference_engine.cache.kv_cache.cache import KVCache  # noqa: E402
+from proxy_inference_engine.cache.kv_cache.quantized import QuantizedKVCache  # noqa: E402
+from proxy_inference_engine.cache.kv_cache.reusable import ReusableKVCache  # noqa: E402
+from proxy_inference_engine.cache.kv_cache.rotating import RotatingKVCache  # noqa: E402
+
+
+---
+src/proxy_inference_engine/cache/kv_cache/cache.py
+---
+import mlx.core as mx
+
+from proxy_inference_engine.cache.kv_cache import BaseCache
+from proxy_inference_engine.cache.kv_cache.quantized import QuantizedKVCache
+
+
+class KVCache(BaseCache):
+    """
+    A key-value cache for transformer models.
+
+    This cache stores the key and value tensors from previous forward passes,
+    allowing for efficient autoregressive generation by avoiding recomputation
+    of previously processed tokens.
+    """
+
+    keys: mx.array | None
+    values: mx.array | None
+    offset: int
+    step: int
+
+    def __init__(self):
+        """Initialize an empty KV cache with default parameters."""
+        self.keys = None
+        self.values = None
+        self.offset = 0
+        self.step = 256
+
+    def update_and_fetch(
+        self, keys: mx.array, values: mx.array
+    ) -> tuple[mx.array, mx.array]:
+        """
+        Update the cache with new key-value pairs and return the full cache.
+
+        This method dynamically resizes the cache as needed to accommodate new tokens.
+
+        Args:
+            keys: New key tensors to add to the cache
+            values: New value tensors to add to the cache
+
+        Returns:
+            A tuple containing the full cached keys and values up to the current offset
+        """
+        prev = self.offset
+        if self.keys is None or (prev + keys.shape[2]) > self.keys.shape[2]:
+            needed = (
+                prev + keys.shape[2] - (0 if self.keys is None else self.keys.shape[2])
+            )
+            n_steps = (needed + self.step - 1) // self.step
+            B, n_kv_heads, _, k_head_dim = keys.shape
+            v_head_dim = values.shape[3]
+            k_shape = (B, n_kv_heads, n_steps * self.step, k_head_dim)
+            v_shape = (B, n_kv_heads, n_steps * self.step, v_head_dim)
+            new_k = mx.zeros(k_shape, keys.dtype)
+            new_v = mx.zeros(v_shape, values.dtype)
+            if self.keys is not None and self.values is not None:
+                if prev % self.step != 0:
+                    self.keys = self.keys[..., :prev, :]
+                    self.values = self.values[..., :prev, :]
+                self.keys = mx.concatenate([self.keys, new_k], axis=2)
+                self.values = mx.concatenate([self.values, new_v], axis=2)
+            else:
+                self.keys, self.values = new_k, new_v
+
+        assert self.keys is not None and self.values is not None
+        self.offset += keys.shape[2]
+        self.keys[..., prev : self.offset, :] = keys
+        self.values[..., prev : self.offset, :] = values
+        return self.keys[..., : self.offset, :], self.values[..., : self.offset, :]
+
+    @property
+    def state(self) -> tuple[mx.array | None, mx.array | None]:
+        """
+        Get the current state of the cache.
+
+        Returns:
+            A tuple containing the cached keys and values, trimmed to the current offset.
+            Returns (None, None) if the cache is empty.
+        """
+        if self.keys is None or self.values is None:
+            return None, None
+
+        if self.offset == self.keys.shape[2]:
+            return self.keys, self.values
+        else:
+            return (
+                self.keys[..., : self.offset, :],
+                self.values[..., : self.offset, :],
+            )
+
+    @state.setter
+    def state(self, v: tuple[mx.array, mx.array]):
+        """
+        Set the state of the cache.
+
+        Args:
+            v: A tuple containing the keys and values to set
+        """
+        self.keys, self.values = v
+        self.offset = self.keys.shape[2] if self.keys is not None else 0
+
+    def is_trimmable(self) -> bool:
+        """
+        Check if this cache can be trimmed.
+
+        Returns:
+            True, as KVCache supports trimming
+        """
+        return True
+
+    def trim(self, n: int) -> int:
+        """
+        Trim the cache by reducing the offset.
+
+        This effectively discards the oldest n tokens from the cache without
+        actually modifying the underlying tensors.
+
+        Args:
+            n: Number of tokens to trim from the beginning of the cache
+
+        Returns:
+            The actual number of tokens trimmed
+        """
+        n = min(self.offset, n)
+        self.offset -= n
+        return n
+
+    def to_quantized(self, group_size: int = 64, bits: int = 4) -> QuantizedKVCache:
+        """
+        Convert this cache to a quantized version for memory efficiency.
+
+        Quantization reduces memory usage by representing values with fewer bits,
+        trading some precision for significant memory savings.
+
+        Args:
+            group_size: Number of elements per quantization group
+            bits: Number of bits to use for quantization (4 or 8)
+
+        Returns:
+            A new QuantizedKVCache containing the quantized version of this cache
+        """
+        quant_cache = QuantizedKVCache(group_size=group_size, bits=bits)
+        quant_cache.offset = self.offset
+        if self.keys is not None and self.values is not None:
+            quant_cache.keys = mx.quantize(self.keys, group_size=group_size, bits=bits)
+            quant_cache.values = mx.quantize(
+                self.values, group_size=group_size, bits=bits
+            )
+        return quant_cache
+
+
+---
+src/proxy_inference_engine/cache/kv_cache/quantized.py
+---
+import mlx.core as mx
+from mlx.utils import tree_map
+
+from proxy_inference_engine.cache.kv_cache import BaseCache
+
+
+class QuantizedKVCache(BaseCache):
+    """
+    A memory-efficient key-value cache using quantization for transformer models.
+
+    This cache stores quantized key and value tensors from previous forward passes,
+    reducing memory usage by representing values with fewer bits while trading
+    some precision for significant memory savings.
+    """
+    keys: tuple[mx.array, mx.array, mx.array] | None
+    values: tuple[mx.array, mx.array, mx.array] | None
+    offset: int
+    step: int
+    group_size: int
+    bits: int
+
+    def __init__(self, group_size: int = 64, bits: int = 8):
+        """
+        Initialize an empty quantized KV cache.
+
+        Args:
+            group_size: Number of elements per quantization group
+            bits: Number of bits to use for quantization (4 or 8)
+        """
+        self.keys = None
+        self.values = None
+        self.offset = 0
+        self.step = 256
+        self.group_size = group_size
+        self.bits = bits
+
+    def update_and_fetch(
+        self, keys: mx.array, values: mx.array
+    ) -> tuple[
+        tuple[mx.array, mx.array, mx.array], tuple[mx.array, mx.array, mx.array]
+    ]:
+        """
+        Update the cache with new key-value pairs and return the full quantized cache.
+
+        This method dynamically resizes the cache as needed to accommodate new tokens,
+        and quantizes the new keys and values before storing them.
+
+        Args:
+            keys: New key tensors to add to the cache
+            values: New value tensors to add to the cache
+
+        Returns:
+            A tuple containing the full quantized cached keys and values up to the current offset
+        """
+        B, n_kv_heads, num_steps, k_head_dim = keys.shape
+        v_head_dim = values.shape[-1]
+        prev = self.offset
+
+        if self.keys is None or (prev + num_steps) > self.keys[0].shape[-2]:
+            el_per_int = 8 * mx.uint32.size // self.bits
+            new_steps = (self.step + num_steps - 1) // self.step * self.step
+            shape = (B, n_kv_heads, new_steps)
+
+            def init_quant(dim: int) -> tuple[mx.array, mx.array, mx.array]:
+                return (
+                    mx.zeros((*shape, dim // el_per_int), dtype=mx.uint32),
+                    mx.zeros((*shape, dim // self.group_size), dtype=keys.dtype),
+                    mx.zeros((*shape, dim // self.group_size), dtype=keys.dtype),
+                )
+
+            def expand_quant(
+                x: mx.array,
+            ) -> mx.array:
+                new_x = mx.zeros((*shape, x.shape[-1]), dtype=x.dtype)
+                return mx.concatenate([x, new_x], axis=-2)
+
+            if self.keys is not None:
+                if prev % self.step != 0:
+                    self.keys, self.values = tree_map(
+                        lambda x: x[..., :prev, :], (self.keys, self.values)
+                    )
+
+                self.keys, self.values = tree_map(
+                    expand_quant, (self.keys, self.values)
+                )
+            else:
+                self.keys, self.values = init_quant(k_head_dim), init_quant(v_head_dim)
+
+        self.offset += num_steps
+
+        keys_quant, keys_scale, keys_bias = mx.quantize(
+            keys, group_size=self.group_size, bits=self.bits
+        )
+        values_quant, values_scale, values_bias = mx.quantize(
+            values, group_size=self.group_size, bits=self.bits
+        )
+
+        # Ensure cache exists before assignment (type checker placation)
+        assert self.keys is not None and self.values is not None
+
+        # Tuple wrangling without index acrobatics
+        for key_arr, quant_val in zip(self.keys, (keys_quant, keys_scale, keys_bias)):
+            key_arr[..., prev : self.offset, :] = quant_val
+        for val_arr, quant_val in zip(self.values, (values_quant, values_scale, values_bias)):
+            val_arr[..., prev : self.offset, :] = quant_val
+
+        return tree_map(lambda x: x[..., : self.offset, :], (self.keys, self.values))
+
+    @property
+    def state(
+        self,
+    ) -> tuple[
+        tuple[mx.array, mx.array, mx.array] | None,
+        tuple[mx.array, mx.array, mx.array] | None,
+    ]:
+        """
+        Get the current state of the quantized cache.
+
+        Returns:
+            A tuple containing the quantized cached keys and values, trimmed to the current offset.
+            Returns (None, None) if the cache is empty.
+        """
+        if self.keys is None:
+            return None, None
+        if self.offset == self.keys[0].shape[2]:
+            return self.keys, self.values
+        else:
+            return tree_map(
+                lambda x: x[..., : self.offset, :], (self.keys, self.values)
+            )
+
+    @state.setter
+    def state(
+        self,
+        v: tuple[
+            tuple[mx.array, mx.array, mx.array], tuple[mx.array, mx.array, mx.array]
+        ],
+    ) -> None:
+        """
+        Set the state of the quantized cache.
+
+        Args:
+            v: A tuple containing the quantized keys and values to set
+        """
+        self.keys, self.values = v
+        if self.keys is not None:
+            self.offset = self.keys[0].shape[-2]
+
+    @property
+    def meta_state(self) -> tuple[str, ...]:
+        """
+        Get metadata about the quantized cache state.
+
+        Returns:
+            A tuple of strings containing the step size, offset, group size, and bits
+        """
+        return tuple(map(str, (self.step, self.offset, self.group_size, self.bits)))
+
+    @meta_state.setter
+    def meta_state(self, v: tuple[str, ...]) -> None:
+        """
+        Set metadata about the quantized cache state.
+
+        Args:
+            v: A tuple of strings containing the step size, offset, group size, and bits
+        """
+        self.step, self.offset, self.group_size, self.bits = map(int, v)
+
+    def is_trimmable(self) -> bool:
+        """
+        Check if this cache can be trimmed.
+
+        Returns:
+            True, as QuantizedKVCache supports trimming
+        """
+        return True
+
+    def trim(self, n: int) -> int:
+        """
+        Trim the cache by reducing the offset.
+
+        This effectively discards the oldest n tokens from the cache without
+        actually modifying the underlying tensors.
+
+        Args:
+            n: Number of tokens to trim from the beginning of the cache
+
+        Returns:
+            The actual number of tokens trimmed
+        """
+        n = min(self.offset, n)
+        self.offset -= n
+        return n
+
+    def to_quantized(self, group_size: int = 64, bits: int = 4) -> "QuantizedKVCache":
+        """
+        Convert this cache to a quantized version for memory efficiency.
+
+        Args:
+            group_size: Number of elements per quantization group
+            bits: Number of bits to use for quantization (4 or 8)
+
+        Returns:
+            A new QuantizedKVCache containing the quantized version of this cache
+        """
+        return self
+
+
+---
+src/proxy_inference_engine/cache/kv_cache/reusable.py
+---
+from __future__ import annotations
+
+import mlx.core as mx
+
+from proxy_inference_engine.cache.kv_cache import BaseCache
+
+
+class ReusableKVCache(BaseCache):
+    """
+    A key-value cache with support for prompt reuse, integrated into BaseCache.
+
+    This class extends the `BaseCache` to add a `reuse` method and
+    an `update_and_fetch` method, which allows efficient handling of
+    prompts that share a common prefix and supports batch sizes > 1.
+    """
+
+    keys: mx.array | None
+    values: mx.array | None
+    offset: int
+    step: int
+
+    def __init__(
+        self,
+        step: int = 256,
+        growth_factor: float = 1.5,
+        max_capacity: int | None = None,
+    ):
+        """
+        Initialize an empty ReusableKVCache with configurable parameters.
+
+        Args:
+            step: The size for step-aligned allocations.
+            growth_factor: The factor used to expand buffer capacity (e.g., 1.5 or 2.0).
+            max_capacity: If set, the cache will never grow beyond this capacity.
+        """
+        self.keys = None
+        self.values = None
+        self.offset = 0
+
+        self.step = step
+        self.growth_factor = growth_factor
+        self.max_capacity = max_capacity
+
+    def reuse(self, new_prompt_length: int, common_prefix_length: int) -> None:
+        """
+        Reuse (part of) this cache for a new prompt that shares a prefix with it.
+
+        1. Trims the cache to the length of the common prefix (offset).
+        2. Ensures capacity for the entire new prompt, expanding if necessary.
+
+        Args:
+            new_prompt_length: The total length of the new prompt.
+            common_prefix_length: The length of the common prefix between the old and new prompts.
+        """
+        if self.keys is None or self.values is None:
+            return
+
+        # Clip the cache to the common prefix
+        self.offset = common_prefix_length
+        current_size = self.keys.shape[2]
+
+        # If we need more space than currently allocated, expand buffer
+        if current_size < new_prompt_length:
+            new_capacity = max(
+                int(current_size * self.growth_factor), new_prompt_length
+            )
+            # Round up to the nearest multiple of self.step
+            new_capacity = ((new_capacity + self.step - 1) // self.step) * self.step
+
+            # Respect a maximum capacity if specified
+            if self.max_capacity is not None:
+                new_capacity = min(new_capacity, self.max_capacity)
+
+            B, n_kv_heads, _, k_head_dim = self.keys.shape
+            v_head_dim = self.values.shape[3]
+
+            # Build new shapes
+            new_k_shape = (B, n_kv_heads, new_capacity, k_head_dim)
+            new_v_shape = (B, n_kv_heads, new_capacity, v_head_dim)
+
+            # Use the existing arrays' dtype
+            dtype_for_k = self.keys.dtype
+            dtype_for_v = self.values.dtype
+
+            # Allocate new buffers
+            new_keys = mx.zeros(new_k_shape, dtype=dtype_for_k)
+            new_values = mx.zeros(new_v_shape, dtype=dtype_for_v)
+
+            # Copy the prefix portion into the new buffers
+            new_keys[..., : self.offset, :] = self.keys[..., : self.offset, :]
+            new_values[..., : self.offset, :] = self.values[..., : self.offset, :]
+
+            self.keys = new_keys
+            self.values = new_values
+
+    def update_and_fetch(
+        self, keys: mx.array, values: mx.array
+    ) -> tuple[mx.array, mx.array]:
+        """
+        Update the cache with new key-value pairs and return the full cache slice.
+
+        This method:
+        1. Checks if there's enough capacity to store the new keys/values.
+        2. If not, expands the buffers by `growth_factor`, aligning to `self.step`.
+        3. Preserves step-based safety by trimming at the old offset if partial steps are present.
+        4. Stores the new keys/values and returns a slice up to the updated offset.
+
+        Args:
+            keys: New key tensors to add to the cache, shape [B, n_kv_heads, #tokens, key_dim].
+            values: New value tensors to add, shape [B, n_kv_heads, #tokens, value_dim].
+
+        Returns:
+            (cached_keys, cached_values): Slices of the cache up to the current offset.
+        """
+        needed = keys.shape[2]
+        prev_offset = self.offset
+
+        # Initialize or check capacity
+        if self.keys is None or self.values is None:
+            # Allocate from scratch
+            self._allocate_new_buffers(keys, values, needed)
+        else:
+            current_capacity = self.keys.shape[2]
+            # If offset + needed doesn't fit, expand
+            if (prev_offset + needed) > current_capacity:
+                # If partial step usage might cause shape mismatch, trim to offset
+                if (prev_offset % self.step) != 0:
+                    # "Safety mechanism" to ensure no shape mismatch
+                    self.keys = self.keys[..., :prev_offset, :]
+                    self.values = self.values[..., :prev_offset, :]
+
+                self._expand_buffers_if_needed(prev_offset + needed)
+
+        # Now we definitely have enough space, so place new data
+        assert self.keys is not None and self.values is not None
+        self.keys[..., prev_offset : prev_offset + needed, :] = keys
+        self.values[..., prev_offset : prev_offset + needed, :] = values
+
+        self.offset += needed
+
+        # Return slices up to offset
+        return self.keys[..., : self.offset, :], self.values[..., : self.offset, :]
+
+    def _allocate_new_buffers(self, keys: mx.array, values: mx.array, needed: int):
+        """
+        Internal helper to allocate new buffers from scratch.
+        """
+        B, n_kv_heads, _, k_head_dim = keys.shape
+        v_head_dim = values.shape[3]
+
+        # Round needed up to multiples of step
+        capacity = ((needed + self.step - 1) // self.step) * self.step
+        if self.max_capacity is not None:
+            capacity = min(capacity, self.max_capacity)
+
+        # Build new shapes
+        new_k_shape = (B, n_kv_heads, capacity, k_head_dim)
+        new_v_shape = (B, n_kv_heads, capacity, v_head_dim)
+
+        dtype_for_k = keys.dtype
+        dtype_for_v = values.dtype
+
+        self.keys = mx.zeros(new_k_shape, dtype=dtype_for_k)
+        self.values = mx.zeros(new_v_shape, dtype=dtype_for_v)
+        self.offset = 0  # Start fresh
+
+    def _expand_buffers_if_needed(self, required_capacity: int):
+        """
+        Internal helper to expand existing buffers using the growth factor and step alignment.
+        """
+        if self.keys is None or self.values is None:
+            return
+
+        current_capacity = self.keys.shape[2]
+        new_capacity = max(
+            int(current_capacity * self.growth_factor), required_capacity
+        )
+        # Align to step boundary
+        new_capacity = ((new_capacity + self.step - 1) // self.step) * self.step
+        # Respect max_capacity if given
+        if self.max_capacity is not None:
+            new_capacity = min(new_capacity, self.max_capacity)
+
+        B, n_kv_heads, _, k_head_dim = self.keys.shape
+        v_head_dim = self.values.shape[3]
+
+        # Build new shapes
+        new_k_shape = (B, n_kv_heads, new_capacity, k_head_dim)
+        new_v_shape = (B, n_kv_heads, new_capacity, v_head_dim)
+
+        dtype_for_k = self.keys.dtype
+        dtype_for_v = self.values.dtype
+
+        # Allocate the new arrays
+        new_keys = mx.zeros(new_k_shape, dtype=dtype_for_k)
+        new_values = mx.zeros(new_v_shape, dtype=dtype_for_v)
+
+        # Copy old data up to self.offset
+        new_keys[..., :self.offset, :] = self.keys[..., :self.offset, :]
+        new_values[..., :self.offset, :] = self.values[..., :self.offset, :]
+
+        self.keys = new_keys
+        self.values = new_values
+
+    @property
+    def state(self):
+        """
+        Get the current state of the cache.
+
+        Returns:
+            (keys, values) for the entire allocated buffer.
+        """
+        return self.keys, self.values
+
+    @state.setter
+    def state(self, v: tuple[mx.array, mx.array]):
+        """
+        Set the state of the cache.
+
+        Args:
+            v: A tuple containing (keys, values).
+        """
+        self.keys, self.values = v
+        self.offset = self.keys.shape[2] if self.keys is not None else 0
+
+    def is_trimmable(self) -> bool:
+        """
+        Check if this cache can be trimmed.
+
+        Returns:
+            True, as ReusableKVCache supports trimming.
+        """
+        return True
+
+    def trim(self, n: int) -> int:
+        """
+        Trim the cache by reducing the offset, effectively discarding
+        the oldest n tokens from the "logical" beginning of the cache.
+
+        Args:
+            n: Number of tokens to trim from the beginning of the cache.
+
+        Returns:
+            The actual number of tokens trimmed.
+        """
+        n = min(self.offset, n)
+        self.offset -= n
+        return n
+
+    def to_quantized(self, group_size: int = 64, bits: int = 4) -> BaseCache:
+        """
+        Convert this cache to a quantized version for memory efficiency.
+        """
+        return self
+
+
+---
+src/proxy_inference_engine/cache/kv_cache/rotating.py
+---
+import mlx.core as mx
+
+from proxy_inference_engine.cache.kv_cache import BaseCache
+
+
+class RotatingKVCache(BaseCache):
+    """
+    A memory-efficient key-value cache with fixed maximum size for transformer models.
+
+    This cache maintains a fixed-size buffer by rotating out older tokens when the
+    maximum size is reached, while preserving a configurable number of initial tokens
+    to maintain important context. It supports both single-token and multi-token updates
+    with different strategies for each case.
+    """
+    keys: mx.array | None
+    values: mx.array | None
+    offset: int
+    max_size: int
+    step: int
+    keep: int
+    _idx: int | None
+
+    def __init__(self, max_size: int, keep: int = 0, step: int = 256):
+        """
+        Initialize a rotating KV cache with a maximum size.
+
+        Args:
+            max_size: Maximum number of tokens to store in the cache
+            keep: Number of initial tokens to always preserve (e.g., prompt tokens)
+            step: Size increment when expanding the cache
+        """
+        self.keep = keep
+        self.keys = None
+        self.values = None
+        self.offset = 0
+        self.max_size = max_size
+        self.step = step
+        self._idx = 0
+
+    def _trim(self, trim_size: int, v: mx.array, append: mx.array | None = None) -> mx.array:
+        """
+        Trim the cache by removing tokens while preserving the initial 'keep' tokens.
+
+        Args:
+            trim_size: Number of tokens to trim
+            v: The array to trim
+            append: Optional array to append after trimming
+
+        Returns:
+            The trimmed array, possibly with appended content
+        """
+        to_cat = []
+        if trim_size > 0:
+            to_cat = [v[..., : self.keep, :], v[..., trim_size + self.keep :, :]]
+        else:
+            to_cat = [v]
+        if append is not None:
+            to_cat.append(append)
+        return mx.concatenate(to_cat, axis=2)
+
+    def _temporal_order(self, v: mx.array) -> mx.array:
+        """
+        Rearrange the cache into temporal order, slicing off the end if unused.
+
+        Args:
+            v: The array to rearrange
+
+        Returns:
+            The rearranged array in proper temporal order
+        """
+        if self._idx == v.shape[2]:
+            return v
+        elif self._idx is not None and self._idx < self.offset:
+            return mx.concatenate(
+                [
+                    v[..., : self.keep, :],
+                    v[..., self._idx :, :],
+                    v[..., self.keep : self._idx, :],
+                ],
+                axis=2,
+            )
+        else:
+            return v[..., : self._idx, :]
+
+    def _update_concat(self, keys: mx.array, values: mx.array) -> tuple[mx.array, mx.array]:
+        """
+        Update the cache by concatenating new keys and values (for multi-token updates).
+
+        Args:
+            keys: New key tensors to add to the cache
+            values: New value tensors to add to the cache
+
+        Returns:
+            A tuple containing the updated cached keys and values
+        """
+        if self.keys is None or self.values is None:
+            self.keys = keys
+            self.values = values
+        else:
+            # Put the keys/values in temporal order to
+            # preserve context
+            self.keys = self._temporal_order(self.keys)
+            self.values = self._temporal_order(self.values)
+
+            # The largest size is self.max_size + S to ensure
+            # every token gets at least self.max_size context
+            if self._idx is not None:
+                trim_size = self._idx - (self.max_size or 0)
+                self.keys = self._trim(trim_size, self.keys, keys)
+                self.values = self._trim(trim_size, self.values, values)
+        self.offset += keys.shape[2]
+        self._idx = self.keys.shape[2] if self.keys is not None else None
+        return self.keys, self.values
+
+    def _update_in_place(self, keys: mx.array, values: mx.array) -> tuple[mx.array, mx.array]:
+        """
+        Update the cache in-place (for single-token updates), rotating as needed.
+
+        Args:
+            keys: New key tensors to add to the cache
+            values: New value tensors to add to the cache
+
+        Returns:
+            A tuple containing the updated cached keys and values
+        """
+        # May not have hit the max size yet, so potentially
+        # keep growing the cache
+        B, n_kv_heads, S, k_head_dim = keys.shape
+        prev = self.offset
+        if self.keys is None or (
+            prev >= self.keys.shape[2] and self.keys.shape[2] < self.max_size
+        ):
+            v_head_dim = values.shape[3]
+            new_size = min(self.step, (self.max_size or 0) - prev)
+            k_shape = (B, n_kv_heads, new_size, k_head_dim)
+            v_shape = (B, n_kv_heads, new_size, v_head_dim)
+            new_k = mx.zeros(k_shape, keys.dtype)
+            new_v = mx.zeros(v_shape, values.dtype)
+            if self.keys is not None and self.values is not None:
+                self.keys = mx.concatenate([self.keys, new_k], axis=2)
+                self.values = mx.concatenate([self.values, new_v], axis=2)
+            else:
+                self.keys, self.values = new_k, new_v
+            self._idx = prev
+
+        # Trim if needed
+        trim_size = (self.keys.shape[2] - self.max_size) if self.keys is not None else 0
+        if trim_size > 0 and self.keys is not None and self.values is not None:
+            self.keys = self._trim(trim_size, self.keys)
+            self.values = self._trim(trim_size, self.values)
+            self._idx = self.max_size
+
+        # Rotate
+        if self._idx == self.max_size:
+            self._idx = self.keep
+
+        assert self.keys is not None and self.values is not None
+        # Assign
+        self.keys[..., self._idx : self._idx + S, :] = keys
+        self.values[..., self._idx : self._idx + S, :] = values
+        self.offset += S
+        self._idx += S
+
+        # If the buffer is not full, slice off the end
+        if self.offset < self.max_size:
+            return self.keys[..., : self.offset, :], self.values[..., : self.offset, :]
+        return self.keys, self.values
+
+    def update_and_fetch(
+        self, keys: mx.array, values: mx.array
+    ) -> tuple[mx.array, mx.array]:
+        """
+        Update the cache with new key-value pairs and return the full cache.
+
+        This method chooses between in-place updates (for single tokens) and
+        concatenation (for multiple tokens), and handles rotation when the cache
+        reaches its maximum size.
+
+        Args:
+            keys: New key tensors to add to the cache
+            values: New value tensors to add to the cache
+
+        Returns:
+            A tuple containing the full cached keys and values
+        """
+        if keys.shape[2] == 1:
+            return self._update_in_place(keys, values)
+        return self._update_concat(keys, values)
+
+    @property
+    def state(self) -> tuple[mx.array | None, mx.array | None]:
+        """
+        Get the current state of the cache.
+
+        Returns:
+            A tuple containing the cached keys and values, trimmed to the current offset.
+            Returns (None, None) if the cache is empty.
+        """
+        if self.keys is None or self.values is None:
+            return None, None
+        if self.offset < self.keys.shape[2]:
+            return self.keys[..., : self.offset, :], self.values[..., : self.offset, :]
+        else:
+            return self.keys, self.values
+
+    @state.setter
+    def state(self, v: tuple[mx.array, mx.array]) -> None:
+        """
+        Set the state of the cache.
+
+        Args:
+            v: A tuple containing the keys and values to set
+        """
+        self.keys, self.values = v
+
+    @property
+    def meta_state(self) -> tuple[str, ...]:
+        """
+        Get metadata about the cache state.
+
+        Returns:
+            A tuple of strings containing the cache configuration and state information
+        """
+        return tuple(
+            map(str, (self.keep, self.max_size, self.step, self.offset, self._idx))
+        )
+
+    @meta_state.setter
+    def meta_state(self, v: tuple[str, ...]) -> None:
+        """
+        Set metadata about the cache state.
+
+        Args:
+            v: A tuple of strings containing the cache configuration and state information
+        """
+        self.keep, self.max_size, self.step, self.offset, self._idx = map(
+            int,
+            v,
+        )
+
+    def is_trimmable(self) -> bool:
+        """
+        Check if this cache can be trimmed.
+
+        Returns:
+            True if the cache can be trimmed, False otherwise
+        """
+        if self.keys is None or self.values is None:
+            return False
+        return self.offset < (self.max_size or 0)
+
+    def trim(self, n: int) -> int:
+        """
+        Trim the cache by reducing the offset.
+
+        This effectively discards the oldest n tokens from the cache without
+        actually modifying the underlying tensors.
+
+        Args:
+            n: Number of tokens to trim from the beginning of the cache
+
+        Returns:
+            The actual number of tokens trimmed
+        """
+        n = min(self.offset, n)
+        self.offset -= n
+        if self._idx is not None:
+            self._idx -= n
+        return n
+
+    def to_quantized(self, group_size: int = 64, bits: int = 4):
+        """
+        Convert this cache to a quantized version for memory efficiency.
+
+        Not yet implemented for RotatingKVCache.
+
+        Args:
+            group_size: Number of elements per quantization group
+            bits: Number of bits to use for quantization (4 or 8)
+
+        Raises:
+            NotImplementedError: This method is not yet implemented
+        """
+        return self
+
+
+---
+src/proxy_inference_engine/tokenizer/__init__.py
+---
+from proxy_inference_engine.tokenizer.tokenizer import Tokenizer
+
+__all__ = ["Tokenizer"]
+
+
+---
+src/proxy_inference_engine/tokenizer/chat_template.jinja
+---
+{# ------------------------------------------------------------------------ #}
+{# Template configuration                                                   #}
+{# Designed to accept model-specific control tokens                         #}
+{# ------------------------------------------------------------------------ #}
+{%- set add_generation_prompt = add_generation_prompt or true -%}
+{%- set prefill = prefill or none -%}
+
+{# ------------------------------------------------------------------------ #}
+{# Macro: render_interaction                                                #}
+{# Renders individual interactions using model-specific control tokens.     #}
+{# ------------------------------------------------------------------------ #}
+{%- macro render_interaction(interaction) -%}
+
+    {# Get the role configuration (start/end tags, etc.) for this interaction #}
+    {%- set role = roles.get(interaction['role']) -%}
+    {%- if role is not none -%}
+        {{- role.role_start_tag + role.role_name + role.role_end_tag -}}
+    {%- endif -%}
+
+    {# Render the main content of the interaction                            #}
+    {%- if interaction['content'] is string -%}
+        {{- interaction['content'] | safe -}}
+    {%- else -%}
+        {%- for content in interaction['content'] -%}
+            {{- content | safe -}}
+        {%- endfor -%}
+    {%- endif -%}
+
+    {# Add end token based on role configuration                             #}
+    {%- if role is not none and role.end_of_message is not none -%}
+        {{- role.end_of_message -}}
+    {%- else -%}
+        {{- end_of_sequence -}}
+    {%- endif -%}
+
+{%- endmacro -%}
+
+{# ------------------------------------------------------------------------ #}
+{# Main chat template structure                                             #}
+{# Iterates over interactions and assembles the complete chat prompt.       #}
+{# Ensures model-specific control tokens delimit the content appropriately. #}
+{# ------------------------------------------------------------------------ #}
+{{ begin_of_text }}
+{%- for interaction in interactions -%}
+    {{ render_interaction(interaction) -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {%- if roles is not none and roles.agent is not none -%}
+        {{- roles.agent.role_start_tag + roles.agent.role_name + roles.agent.role_end_tag -}}
+    {%- endif -%}
+{%- endif -%}
+{%- if prefill is not none -%}
+    {{- prefill -}}
+{%- endif -%}
+
+
+---
+src/proxy_inference_engine/tokenizer/tokenizer.py
+---
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+import mlx.core as mx
+from transformers.tokenization_utils import PreTrainedTokenizer
+from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
+
+from proxy_inference_engine.interaction import Interaction
+from proxy_inference_engine.tokenizer.control_tokens import (
+    ControlTokens,
+    get_control_tokens,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class Tokenizer:
+    """A convienience wrapper around a Hugging Face tokenizer.
+
+    The wrapper provides convienient access to control tokens,
+    encoding/decoding with templates, and vocabulary management.
+    """
+
+    def __init__(
+        self,
+        hf_tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
+        tokenizer_config: dict[str, Any],
+    ) -> None:
+        """
+        Args:
+            tokenizer: The base Hugging Face tokenizer to wrap
+            tokenizer_config: The tokenizer config
+        """
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        self._tokenizer = hf_tokenizer
+        self._tokenizer_config = tokenizer_config
+        self._control_tokens = get_control_tokens(tokenizer_config)
+        self.load_chat_template()
+
+    def load_chat_template(
+        self,
+        file_name: str | None = None,
+        template_string: str | None = None,
+    ) -> None:
+        """Load a chat template from a file.
+
+        Args:
+            file_name: The name of the file to load the chat template from. No extension is needed.
+            template_string: A string to use as the chat template.
+        """
+        if file_name and template_string:
+            raise ValueError("Cannot provide both file_name and template_string")
+
+        if template_string:
+            self._tokenizer.chat_template = template_string
+        else:
+            name = file_name or "chat_template.jinja"
+            name = f"{name}.jinja" if not name.endswith(".jinja") else name
+
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            template_path = os.path.join(current_dir, name)
+
+            # Fall back to default template if specified one doesn't exist
+            if not os.path.exists(template_path):
+                template_path = os.path.join(current_dir, "chat_template.jinja")
+
+            with open(template_path) as f:
+                self._tokenizer.chat_template = f.read()
+
+    @property
+    def control_tokens(self) -> ControlTokens:
+        """
+        Get the control tokens, or raise an error if they are not set.
+
+        Control tokens such as end-of-sequence or tool-use tokens are used to control the model's behavior.
+        """
+        if self._control_tokens is None:
+            raise ValueError("Control tokens are not set")
+        return self._control_tokens
+
+    @property
+    def stop_tokens(self) -> set[int]:
+        """Get the set of token IDs that indicate stopping generation.
+
+        Returns:
+            Set of token IDs for EOS and EOM tokens from control_tokens.
+            Returns empty set if no control tokens configured.
+        """
+        if not self._control_tokens:
+            return set()
+
+        # Get all end token IDs without special tokens to avoid duplicates
+        stop_tokens = set()
+        for stop_token in self._control_tokens.end_tokens():
+            stop_tokens.add(
+                self._tokenizer.encode(stop_token, add_special_tokens=False)[0]
+            )
+
+        # Flatten and deduplicate token IDs into a set
+        return stop_tokens
+
+    def decode(self, tokens: mx.array, **kwargs) -> str:
+        """Decode token IDs back to text.
+
+        Args:
+            tokens: List of token IDs to decode
+
+        Returns:
+            Decoded text string
+        """
+        return self._tokenizer.decode(tokens.tolist(), **kwargs)
+
+    def encode(
+        self,
+        prompt: str | list[dict[str, Any]] | list[Interaction],
+        **kwargs,
+    ) -> mx.array:
+
+        if isinstance(prompt, str):
+            return mx.array(self._tokenizer.encode(prompt, **kwargs))
+
+        if isinstance(prompt, list):
+            prompt = [
+                event.to_dict() for event in prompt if isinstance(event, Interaction)
+            ]
+            kwargs["interactions"] = prompt
+
+        encoded_prompt = self._tokenizer.apply_chat_template(prompt,**kwargs)
+
+        if isinstance(encoded_prompt, str):
+            encoded_prompt = self._tokenizer.encode(encoded_prompt, **kwargs)
+        elif isinstance(encoded_prompt, list) and any(
+            isinstance(item, str) for item in encoded_prompt
+        ):
+            encoded_prompt = [
+                self._tokenizer.encode(item, **kwargs)
+                for item in encoded_prompt
+                if isinstance(item, str)
+            ]
+
+        return mx.array(encoded_prompt)
+
+
+---
+src/proxy_inference_engine/tokenizer/control_tokens/__init__.py
+---
+import json
+import os
+
+from pydantic import BaseModel
+
+
+class Role(BaseModel):
+    role_name: str
+    role_start_tag: str
+    role_end_tag: str
+    end_of_message: str | None = None
+
+
+class RoleTags(BaseModel):
+    system: Role | None = None
+    agent: Role | None = None
+    user: Role | None = None
+    tool: Role | None = None
+
+
+class ControlTokens(BaseModel):
+    """Control tokens for different model templates.
+
+    This class defines the structure and access methods for control tokens used in
+    various LLM template formats.
+    """
+
+    template_type: str
+    begin_of_text: str
+    end_of_message: str
+    end_of_sequence: str
+
+    roles: RoleTags
+
+    def end_tokens(self) -> list[str]:
+        """Returns a list of tokens that indicate the end of a sequence.
+
+        Returns:
+            A list of end tokens.
+        """
+        return [self.end_of_sequence, self.end_of_message]
+
+def get_control_tokens(tokenizer_config: dict) -> ControlTokens:
+    """Get the control tokens for the model."""
+    model_type = _determine_model_type(tokenizer_config)
+    match model_type:
+        case "gemma":
+            return _load_control_tokens("gemma")
+        case _: # default to chatml
+            return _load_control_tokens("chatml")
+
+
+def _determine_model_type(tokenizer_config: dict) -> str:
+    """Determine the model type from the model path."""
+    model_type = tokenizer_config.get("model_type", "chatml")
+
+    eos_token = tokenizer_config.get("eos_token", "<|eot_id|>")
+
+    if isinstance(eos_token, str) and eos_token.strip() == "<|im_end|>":
+        model_type = "chatml"
+
+    return model_type
+
+
+def _load_control_tokens(model_type: str) -> ControlTokens:
+    """Load the control tokens for the model."""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, f"{model_type}.json")
+    with open(file_path) as f:
+        data = json.load(f)
+        return ControlTokens(**data)
+
+
+---
+src/proxy_inference_engine/tokenizer/control_tokens/chatml.json
+---
+{
+    "template_type": "chatml",
+    "begin_of_text": "",
+    "end_of_sequence": "<|im_end|>\n",
+    "end_of_message": "<|im_end|>\n",
+    "roles": {
+        "system": {
+            "role_name": "system",
+            "role_start_tag": "<|im_start|>",
+            "role_end_tag": "\n"
+        },
+        "agent": {
+            "role_name": "assistant",
+            "role_start_tag": "<|im_start|>",
+            "role_end_tag": "\n"
+        },
+        "user": {
+            "role_name": "user",
+            "role_start_tag": "<|im_start|>",
+            "role_end_tag": "\n"
+        },
+        "tool": {
+            "role_name": "tool",
+            "role_start_tag": "<|im_start|>",
+            "role_end_tag": "\n"
+        }
+    }
+}
+
+
+---
+src/proxy_inference_engine/tokenizer/control_tokens/gemma.json
+---
+{
+    "template_type": "gemma",
+    "begin_of_text": "",
+    "end_of_sequence": "<|im_end|>\n",
+    "end_of_message": "<|im_end|>\n",
+    "roles": {
+        "system": {
+            "role_name": "system",
+            "role_start_tag": "<|im_start|>",
+            "role_end_tag": "\n"
+        },
+        "agent": {
+            "role_name": "assistant",
+            "role_start_tag": "<|im_start|>",
+            "role_end_tag": "\n"
+        },
+        "user": {
+            "role_name": "user",
+            "role_start_tag": "<|im_start|>",
+            "role_end_tag": "\n"
+        },
+        "tool": {
+            "role_name": "tool",
+            "role_start_tag": "<|im_start|>",
+            "role_end_tag": "\n"
+        }
+    }
+}
+
+
+---
+src/proxy_inference_engine/server/__init__.py
+---
+
+
+---
+src/proxy_inference_engine/server/__main__.py
+---
+import uvicorn
+
+from proxy_inference_engine.server.app import logger
+from proxy_inference_engine.server.config import load_settings
+
+if __name__ == "__main__":
+    settings = load_settings()
+    logger.info(f"Starting server on {settings.HOST}:{settings.PORT}")
+    uvicorn.run(
+        "proxy_inference_engine.server.app:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        log_level="info",
+    )
+
+
+---
+src/proxy_inference_engine/server/app.py
+---
+import logging
+import logging.config
+
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
+
+from proxy_inference_engine.engine import InferenceEngine
+from proxy_inference_engine.server.config import load_settings
+from proxy_inference_engine.server.dependencies import get_inference_engine
+from proxy_inference_engine.server.exceptions import InferenceError
+from proxy_inference_engine.server.routes.chat import chat_router
+from proxy_inference_engine.server.routes.completions import completions_router
+from proxy_inference_engine.server.routes.responses import responses_router
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# Global variable to hold the engine
+inference_engine: InferenceEngine | None = None
+
+# --- Application Setup ---
+def create_app() -> FastAPI:
+    global inference_engine
+
+    logger.info("Starting application setup...")
+    settings = load_settings()
+    logger.info(f"Settings loaded. Model path: {settings.MODEL_PATH}")
+
+    try:
+        logger.info(f"Loading InferenceEngine from: {settings.MODEL_PATH}")
+        inference_engine = InferenceEngine(settings.MODEL_PATH)
+        logger.info("InferenceEngine loaded successfully.")
+    except Exception as e:
+        logger.exception(f"FATAL: Failed to load InferenceEngine: {e}", exc_info=True)
+        raise RuntimeError(f"Could not initialize InferenceEngine: {e}") from e
+
+    # --- Instantiate Services ---
+    logger.info("Instantiating services...")
+
+    # --- Create FastAPI App ---
+    logger.info("Creating FastAPI application instance...")
+    app = FastAPI(
+        title="Proxy Inference Engine",
+        description="A server for the Proxy Inference Engine.",
+        version="0.1.0",
+    )
+
+    def _get_loaded_engine() -> InferenceEngine:
+        if inference_engine is None:
+            raise RuntimeError("Inference engine not initialized")
+        return inference_engine
+
+    app.dependency_overrides[get_inference_engine] = _get_loaded_engine
+
+    @app.exception_handler(InferenceError)
+    async def inference_exception_handler(request: Request, exc: InferenceError):
+        logger.error(f"Caught InferenceError: {exc}", exc_info=True)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": f"Inference operation failed: {exc}"},
+        )
+
+    # Add other exception handlers if needed (e.g., for validation errors)
+    logger.info("Exception handlers registered.")
+
+    # --- Include Routers ---
+    app.include_router(completions_router, prefix="/v1", tags=["Completions"])
+    app.include_router(chat_router, prefix="/v1", tags=["Chat"])
+    app.include_router(responses_router, prefix="/v1", tags=["Responses"])
+    logger.info("Routers included.")
+
+    logger.info("Application setup complete.")
+    return app
+
+
+# Expose the app instance for uvicorn or other ASGI servers
+app = create_app()
+
+
+---
+src/proxy_inference_engine/server/config.py
+---
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    MODEL_PATH: str = "mlx-community/gemma-3-12b-it-qat-4bit"
+    HOST: str = "0.0.0.0"
+    PORT: int = 8000
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+
+_settings: Settings | None = None
+
+
+def load_settings() -> Settings:
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
+
+
+---
+src/proxy_inference_engine/server/dependencies.py
+---
+from typing import Annotated
+
+from fastapi import Depends
+
+from proxy_inference_engine.engine import InferenceEngine
+
+
+async def get_inference_engine() -> InferenceEngine:
+    raise NotImplementedError("Dependency provider not configured")
+
+InferenceEngineDep = Annotated[InferenceEngine, Depends(get_inference_engine)]
+
+
+---
+src/proxy_inference_engine/server/exceptions.py
+---
+class InferenceError(Exception):
+    """Custom exception for inference-related errors."""
+
+    pass
+
+
+---
+src/proxy_inference_engine/server/models/__init__.py
+---
+from proxy_inference_engine.server.models.chat import (
+    ChatCompletionChoice,
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ChatCompletionUsage,
+)
+from proxy_inference_engine.server.models.completions import (
+    CompletionChoice,
+    CompletionRequest,
+    CompletionResponse,
+    CompletionUsage,
+)
+
+__all__ = [
+    "ChatCompletionChoice",
+    "ChatCompletionRequest",
+    "ChatCompletionResponse",
+    "ChatCompletionUsage",
+    "CompletionChoice",
+    "CompletionRequest",
+    "CompletionResponse",
+    "CompletionUsage",
+]
+
+
+---
+src/proxy_inference_engine/server/models/chat.py
+---
+import secrets
+import time
+from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from proxy_inference_engine.interaction import (
+    Content,
+    Interaction,
+    Role,
+)
+
+# --- Constants ---
+CHAT_COMPLETION_ID_PREFIX = "chatcmpl-"
+CHAT_COMPLETION_OBJECT = "chat.completion"
+
+
+def generate_chat_completion_id(prefix: str = CHAT_COMPLETION_ID_PREFIX) -> str:
+    """Generates a unique identifier string for a completion response."""
+    random_part = secrets.token_urlsafe(22)
+    return f"{prefix}{random_part}"
+
+
+def get_current_timestamp() -> int:
+    """Returns the current time as a Unix epoch timestamp (seconds)."""
+    return int(time.time())
+
+
+class ChatMessage(BaseModel):
+    """Represents a single message within the chat conversation."""
+
+    role: str = Field(description="The role of the messages author.")
+    content: str = Field(description="The contents of the message.")
+
+    def to_interaction(self) -> Interaction:
+        role = Role(self.role)
+        return Interaction(
+            role,
+            [Content.text(self.content)],
+        )
+
+class ChatCompletionToolChoice(BaseModel):
+    """Defines a tool for the chat completion request."""
+
+    class FunctionName(BaseModel):
+        """Defines a function name for the chat completion tool."""
+
+        name: str = Field(description="The name of the function to call.")
+
+    type: Literal["function"] = "function"
+    function: FunctionName = Field(description="The function to call.")
+
+class ChatCompletionToolUseMode(Enum):
+    """Controls which (if any) tool is called by the model."""
+
+    AUTO = "auto"
+    REQUIRED = "required"
+    NONE = "none"
+
+class ChatCompletionFunction(BaseModel):
+    """Defines a function for the response request."""
+
+    name: str = Field(description="The name of the function to call.")
+    type: Literal["function"] = "function"
+    description: str = Field(
+        description="A description of the function. Used by the model to determine whether or not to call the function."
+    )
+    strict: bool = Field(
+        default=True,
+        description="Whether to enforce strict parameter validation.",
+    )
+    parameters: dict = Field(
+        description="A JSON schema object describing the parameters of the function."
+    )
+
+class ChatCompletionTool(BaseModel):
+    """Defines a tool for the chat completion request."""
+
+    type: Literal["function"] = "function"
+    function: ChatCompletionFunction = Field(description="The function to call.")
+
+
+class ChatCompletionJSONSchemaResponseFormat(BaseModel):
+    """Defines the response format for the chat completion request."""
+
+    class JSONSchema(BaseModel):
+        """Defines the JSON schema for the response format."""
+
+        name: str = Field(description="The name of the JSON schema.")
+        description: str | None = Field(
+            default=None,
+            description="The description of the JSON schema."
+        )
+        strict: bool | None = Field(
+            default=None,
+            description="Whether to enforce strict validation of the JSON schema."
+        )
+        schema: dict = Field(description="The JSON schema for the response format.")
+
+    type: Literal["json_schema"] = "json_schema"
+    json_schema: JSONSchema = Field(description="The JSON schema for the response format.")
+
+class ChatCompletionTextResponseFormat(BaseModel):
+    """Defines the response format for the chat completion request."""
+
+    type: Literal["text"] = "text"
+
+
+class ChatCompletionRequest(BaseModel):
+    """Defines the request schema for the chat completion endpoint."""
+
+    model: str = Field(
+        description="The identifier of the model designated for completion generation."
+    )
+    messages: list[ChatMessage] = Field(
+        description="A list of messages comprising the conversation history.",
+        min_length=1,
+    )
+    max_completion_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="The upper limit on the number of tokens to generate per completion.",
+    )
+    temperature: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=2.0,
+        description="Controls randomness via sampling temperature.",
+    )
+    top_p: float | None = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Implements nucleus sampling.",
+    )
+    top_k: int | None = Field(
+        default=50,
+        ge=1,
+        le=100,
+        description="Controls the number of tokens considered at each step.",
+    )
+    min_p: float | None = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum probability threshold for token consideration.",
+    )
+    parallel_tool_calls: bool | None = Field(
+        default=None,
+        description="Whether to allow the model to run tool calls in parallel.",
+    )
+    tool_choice: ChatCompletionToolUseMode | ChatCompletionToolChoice | None = Field(
+        default=None,
+        description="Controls which (if any) tool is called by the model.",
+    )
+    tools: list[ChatCompletionTool] | None = Field(
+        default=None,
+        description="A list of tools that the model can use to generate a response.",
+    )
+    response_format: (
+        ChatCompletionTextResponseFormat | ChatCompletionJSONSchemaResponseFormat | None
+    ) = Field(
+        default=None,
+        description="The format of the response.",
+    )
+
+class ChatCompletionChoice(BaseModel):
+    """Represents a single generated chat completion choice."""
+
+    index: int = Field(description="The index of this choice.")
+    message: ChatMessage = Field(description="The message generated by the model.")
+    finish_reason: str | None = Field(
+        description="Reason generation stopped (e.g., 'stop', 'length', 'tool_calls')."
+    )
+
+class ChatCompletionUsage(BaseModel):
+    """Provides token usage statistics for the chat completion request."""
+
+    input_tokens: int = Field(
+        description="The number of tokens constituting the input prompt(s)."
+    )
+    output_tokens: int = Field(
+        description="The total number of tokens generated across all completion choices."
+    )
+    total_tokens: int = Field(
+        description="The sum of `input_tokens` and `output_tokens`."
+    )
+
+# --- Main Response Model ---
+class ChatCompletionResponse(BaseModel):
+    """Defines the response schema for the chat completion endpoint."""
+
+    id: str = Field(
+        default_factory=generate_chat_completion_id,
+        description="A unique identifier for the chat completion.",
+    )
+    object: str = Field(
+        default=CHAT_COMPLETION_OBJECT,
+        description="The object type, always 'chat.completion'.",
+    )
+    created: int = Field(
+        default_factory=get_current_timestamp,
+        description="The Unix timestamp when the completion was created.",
+    )
+    model: str = Field(description="The model used for the chat completion.")
+    choices: list[ChatCompletionChoice] = Field(
+        description="A list of chat completion choices."
+    )
+    usage: ChatCompletionUsage = Field(
+        description="Usage statistics for the completion request."
+    )
+    system_fingerprint: str | None = Field(
+        default=None,
+        description="System fingerprint representing the backend configuration.",
+    )
+
+
+---
+src/proxy_inference_engine/server/models/completions.py
+---
+import secrets
+import time
+
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
+
+# --- Constants ---
+COMPLETION_ID_PREFIX = "cmpl-"
+TEXT_COMPLETION_OBJECT = "text_completion"
+
+def generate_completion_id(prefix: str = COMPLETION_ID_PREFIX) -> str:
+    """Generates a unique identifier for a completion response."""
+    random_part = secrets.token_urlsafe(22)
+    return f"{prefix}{random_part}"
+
+
+def get_current_timestamp() -> int:
+    """Returns the current time as a Unix epoch timestamp (seconds)."""
+    return int(time.time())
+
+class CompletionRequest(BaseModel):
+    """
+    Defines the request schema for the legacy text completion endpoint (compatible with OpenAI's API).
+    """
+
+    model: str = Field(
+        description="The identifier of the model designated for completion generation."
+    )
+    prompt: str | list[str] = Field(
+        default="",
+        description="The input prompt(s) for which completions are generated. Accepts a single string or a list for batch processing.",
+    )
+    max_completion_tokens: int = Field(
+        default=256,
+        ge=1,
+        description="The upper limit on the number of tokens to generate per completion.",
+    )
+    temperature: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=2.0,
+        description="Controls randomness via sampling temperature. Values closer to 0.0 yield more deterministic outputs, while higher values increase randomness.",
+    )
+    top_p: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Implements nucleus sampling by considering only tokens whose cumulative probability mass exceeds this threshold.",
+    )
+    min_p: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum probability threshold for token consideration during sampling.",
+    )
+    n: int = Field(
+        default=1,
+        ge=1,
+        description="Specifies the quantity of independent completions to generate for each provided prompt.",
+    )
+    stream: bool = Field(
+        default=False,
+        description="Indicates whether to stream intermediate results back as server-sent events.",
+    )
+    logprobs: int | None = Field(
+        default=None,
+        ge=0,
+        le=5,
+        description="If specified, includes the log probabilities for the top `logprobs` most likely tokens at each generation step.",
+    )
+    best_of: int | None = Field(
+        default=None,
+        ge=1,
+        description="Generates `best_of` completions server-side and returns the one with the highest log probability per token. Requires `best_of > n`.",
+    )
+    top_k: int = Field(
+        default=0,
+        ge=0,
+        description="Restricts sampling to the `k` most probable tokens. A value of 0 disables top-k filtering.",
+    )
+
+    @field_validator("best_of")
+    @classmethod
+    def check_best_of_greater_than_n(
+        cls, v: int | None, info: ValidationInfo
+    ) -> int | None:
+        """Validates that `best_of` is greater than or equal to `n` if both are provided."""
+        # Ensure info.data is accessed safely
+        if (
+            v is not None
+            and "n" in info.data
+            and isinstance(info.data.get("n"), int)
+            and info.data["n"] > v
+        ):
+            raise ValueError(
+                f"`best_of` ({v}) must be greater than or equal to `n` ({info.data['n']})"
+            )
+        return v
+
+
+# --- Response Models ---
+
+
+class CompletionChoice(BaseModel):
+    """Represents a single generated completion choice."""
+
+    index: int = Field(
+        description="The sequential index of this choice within the response list."
+    )
+    text: str = Field(description="The generated completion text for this choice.")
+    logprobs: list[float] | None = Field(
+        default=None,
+        description="Contains log probabilities if requested via the `logprobs` parameter. returns N highest log probabilities for each token.",
+    )
+    finish_reason: str | None = Field(
+        description="The reason the model terminated generation (e.g., 'stop', 'length')."
+    )
+
+
+class CompletionUsage(BaseModel):
+    """Provides token usage statistics for the completion request."""
+
+    input_tokens: int = Field(
+        description="The number of tokens constituting the input prompt(s)."
+    )
+    output_tokens: int = Field(
+        description="The total number of tokens generated across all completion choices."
+    )
+    total_tokens: int = Field(
+        description="The sum of `input_tokens` and `output_tokens`."
+    )
+
+
+class CompletionResponse(BaseModel):
+    """
+    Defines the response schema for the legacy text completion endpoint.
+    """
+
+    id: str = Field(
+        default_factory=generate_completion_id,
+        description="A unique identifier assigned to this completion response.",
+        examples=["cmpl-uqkvlQyYK7bGYrRHQ0eXlWi7"],
+    )
+    object: str = Field(
+        default=TEXT_COMPLETION_OBJECT,
+        description="The type of object returned, consistently 'text_completion'.",
+    )
+    created: int = Field(
+        default_factory=get_current_timestamp,
+        description="The Unix timestamp (seconds since epoch) indicating when the response was generated.",
+    )
+    model: str = Field(
+        description="The identifier of the model that executed the completion request."
+    )
+    choices: list[CompletionChoice] = Field(
+        description="A list containing the generated completion(s)."
+    )
+    usage: CompletionUsage = Field(
+        description="An object detailing the token count statistics for the request."
+    )
+    system_fingerprint: str | None = Field(
+        default=None,
+        description="An opaque identifier representing the backend configuration that handled the request. May be used for reproducibility tracking.",
+    )
+
+
+---
+src/proxy_inference_engine/server/models/responses/__init__.py
+---
+from proxy_inference_engine.server.models.responses.output import (
+    OutputMessage,
+    OutputTextContent,
+    ResponseObject,
+    ResponseUsage,
+)
+from proxy_inference_engine.server.models.responses.request import ResponseRequest
+
+__all__ = ["OutputMessage", "OutputTextContent", "ResponseObject", "ResponseRequest", "ResponseUsage"]
+
+
+---
+src/proxy_inference_engine/server/models/responses/format.py
+---
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class ResponseFormat(BaseModel):
+    """Defines the response format for the response request."""
+
+    format: TextResponseFormat | JSONSchemaResponseFormat = Field(description="The response format to use.")
+
+class TextResponseFormat(BaseModel):
+    """Defines the response format for the response request."""
+
+    type: Literal["text"] = "text"
+
+class JSONSchemaResponseFormat(BaseModel):
+    """Defines the JSON schema for the response format."""
+
+    type: Literal["json_schema"] = "json_schema"
+    schema: dict = Field(description="The JSON schema to use.")
+    name: str = Field(description="The name of the JSON schema.")
+    description: str | None = Field(
+        default="",
+        description="The description of the JSON schema.",
+    )
+    strict: bool | None = Field(
+        default=False,
+        description="Whether to enforce strict validation of the JSON schema.",
+    )
+
+
+---
+src/proxy_inference_engine/server/models/responses/output.py
+---
+import secrets
+import time
+from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from proxy_inference_engine.server.models.responses.format import ResponseFormat
+from proxy_inference_engine.server.models.responses.tools import (
+    Function,
+    ToolUseMode,
+)
+
+# --- Constants ---
+RESPONSE_ID_PREFIX = "resp_"
+RESPONSE_OBJECT = "response"
+MESSAGE_ID_PREFIX = "msg_"
+MESSAGE_OBJECT = "message"
+OUTPUT_TEXT_OBJECT = "output_text"
+FUNCTION_CALL_ID_PREFIX = "fc_"
+TOOL_CALL_ID_PREFIX = "call_"
+
+def generate_message_id(prefix: str = MESSAGE_ID_PREFIX) -> str:
+    random_part = secrets.token_urlsafe(22)
+    return f"{prefix}{random_part}"
+
+def generate_response_id(prefix: str = RESPONSE_ID_PREFIX) -> str:
+    random_part = secrets.token_urlsafe(22)  # Adjust length as needed
+    return f"{prefix}{random_part}"
+
+def generate_function_call_id(prefix: str = FUNCTION_CALL_ID_PREFIX) -> str:
+    random_part = secrets.token_urlsafe(22)
+    return f"{prefix}{random_part}"
+
+def generate_tool_call_id(prefix: str = TOOL_CALL_ID_PREFIX) -> str:
+    random_part = secrets.token_urlsafe(22)
+    return f"{prefix}{random_part}"
+
+def get_current_timestamp() -> int:
+    return int(time.time())
+
+class OutputTextContent(BaseModel):
+    """Represents the text content of an output message."""
+
+    type: Literal["output_text"] = OUTPUT_TEXT_OBJECT
+    text: str = Field(description="The generated text content.")
+
+class OutputStatus(Enum):
+    """Represents the status of a message."""
+
+    COMPLETED = "completed"
+    INCOMPLETE = "incomplete"
+    IN_PROGRESS = "in_progress"
+    FAILED = "failed"
+
+class OutputMessageType(Enum):
+    """Represents the type of a message."""
+
+    MESSAGE = "message"
+    FUNCTION_CALL = "function_call"
+    REASONING = "reasoning"
+
+class OutputMessage(BaseModel):
+    """Represents the message output within a response."""
+
+    type: OutputMessageType = Field(default=OutputMessageType.MESSAGE, description="The type of the message.")
+    status: OutputStatus = Field(default=OutputStatus.COMPLETED, description="The status of the message.")
+    role: Literal["assistant"] = "assistant"
+    id: str = Field(
+        default_factory=generate_message_id, description="Unique message identifier."
+    )
+    content: list[OutputTextContent] = Field(
+        description="Content generated by the assistant."
+    )
+
+class OutputFunctionCall(BaseModel):
+    """Represents the function call output within a response."""
+
+    type: Literal["function_call"] = "function_call"
+    name: str = Field(description="The name of the function to call.")
+    id: str = Field(
+        default_factory=generate_function_call_id, description="Unique function call identifier."
+    )
+    call_id: str = Field(
+        default_factory=generate_tool_call_id, description="Unique tool call identifier."
+    )
+    arguments: str = Field(description="The arguments to pass to the function.")
+    status: OutputStatus = Field(default=OutputStatus.COMPLETED, description="The status of the function call.")
+
+
+class ResponseUsage(BaseModel):
+    """Provides token usage statistics for the chat completion request."""
+
+    input_tokens: int = Field(
+        description="The number of tokens constituting the input prompt(s)."
+    )
+    output_tokens: int = Field(
+        description="The total number of tokens generated across all completion choices."
+    )
+    total_tokens: int = Field(
+        description="The sum of `input_tokens` and `output_tokens`."
+    )
+
+
+class ResponseObject(BaseModel):
+    """Defines the response schema for the /v1/responses endpoint."""
+
+    id: str = Field(
+        default_factory=generate_response_id,
+        description="Unique identifier for the response.",
+    )
+    object: Literal["response"] = RESPONSE_OBJECT
+    created_at: int = Field(
+        default_factory=get_current_timestamp,
+        description="Unix timestamp of response creation.",
+    )
+    parallel_tool_calls: bool = Field(
+        default=False,
+        description="Whether to allow the model to run tool calls in parallel.",
+    )
+    temperature: float | None = Field(
+        default=None,
+        description="Sampling temperature.",
+    )
+    top_p: float | None = Field(
+        default=None,
+        description="Nucleus sampling threshold.",
+    )
+    top_k: int | None = Field(
+        default=None,
+        description="Controls the number of tokens considered at each step.",
+    )
+    min_p: float | None = Field(
+        default=None,
+        description="Minimum probability threshold for token consideration.",
+    )
+    tool_choice: ToolUseMode = Field(
+        default=ToolUseMode.AUTO,
+        description="How the model should select which tool (or tools) to use when generating a response.",
+    )
+    tools: list[Function] = Field(
+        default=[],
+        description="A list of tools that the model can use to generate a response.",
+    )
+    status: OutputStatus = OutputStatus.COMPLETED
+    model: str = Field(description="Model ID used for the response.")
+    output: list[OutputMessage | OutputFunctionCall] = Field(
+        description="List containing the output message(s)."
+    )
+    usage: ResponseUsage = Field(
+        description="Usage statistics for the response request."
+    )
+    text: ResponseFormat | None = Field(
+        default=None,
+        description="The response format to use.",
+    )
+
+
+---
+src/proxy_inference_engine/server/models/responses/request.py
+---
+from pydantic import BaseModel, Field
+
+from proxy_inference_engine.server.models.responses.format import ResponseFormat
+from src.proxy_inference_engine.server.models.responses.tools import (
+    Function,
+    FunctionID,
+    ToolUseMode,
+)
+
+
+class ResponseRequest(BaseModel):
+    """Defines the request schema for the /v1/responses endpoint (MVP)."""
+
+    model: str = Field(description="Model ID used to generate the response.")
+    input: str = Field(description="Text input to the model.")
+    stream: bool | None = Field(
+        default=None,
+        description="Whether to stream the response.",
+    )
+    parallel_tool_calls: bool | None = Field(
+        default=None,
+        description="Whether to allow the model to run tool calls in parallel.",
+    )
+    instructions: str | None = Field(
+        default=None,
+        description="System/developer instructions for the model.",
+    )
+    max_output_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="Upper bound for the number of tokens generated.",
+    )
+    temperature: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        description="Sampling temperature.",
+    )
+    top_p: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Nucleus sampling threshold.",
+    )
+    top_k: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="Controls the number of tokens considered at each step.",
+    )
+    min_p: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Minimum probability threshold for token consideration.",
+    )
+    tool_choice: ToolUseMode | FunctionID = Field(
+        default=ToolUseMode.AUTO,
+        description="How the model should select which tool (or tools) to use when generating a response.",
+    )
+    tools: list[Function] | None = Field(
+        default=None,
+        description="A list of tools that the model can use to generate a response.",
+    )
+    text: ResponseFormat | None = Field(
+        default=None,
+        description="The format of the response.",
+    )
+
+
+---
+src/proxy_inference_engine/server/models/responses/tools.py
+---
+from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class Function(BaseModel):
+    """Defines a function for the response request."""
+
+    name: str = Field(description="The name of the function to call.")
+    type: Literal["function"] = "function"
+    description: str = Field(
+        description="A description of the function. Used by the model to determine whether or not to call the function."
+    )
+    strict: bool = Field(
+        default=True,
+        description="Whether to enforce strict parameter validation.",
+    )
+    parameters: dict = Field(
+        description="A JSON schema object describing the parameters of the function."
+    )
+
+class ToolUseMode(Enum):
+    """Controls which (if any) tool is called by the model."""
+
+    AUTO = "auto"
+    REQUIRED = "required"
+    NONE = "none"
+
+class FunctionID(BaseModel):
+    """Defines a function tool for the response request."""
+
+    type: Literal["function"] = "function"
+    name: str = Field(description="The name of the function to call.")
+
+
+---
+src/proxy_inference_engine/server/routes/__init__.py
+---
+ 
+
+---
+src/proxy_inference_engine/server/routes/chat.py
+---
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from proxy_inference_engine.engine.inference_engine import InferenceEngine
+from proxy_inference_engine.interaction import Interaction
+from proxy_inference_engine.server.app import get_inference_engine
+from proxy_inference_engine.server.exceptions import InferenceError
+from proxy_inference_engine.server.models.chat import (
+    ChatCompletionChoice,
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ChatCompletionUsage,
+    ChatMessage,
+)
+
+logger = logging.getLogger(__name__)
+
+chat_router = APIRouter()
+
+
+@chat_router.post(
+    "/chat/completions",
+    response_model=ChatCompletionResponse,
+    summary="Create a chat completion",
+    tags=["Chat"],
+)
+async def handle_completion_request(
+    request: ChatCompletionRequest,
+    engine: InferenceEngine = Depends(get_inference_engine),  # noqa: B008
+) -> ChatCompletionResponse:
+    """
+    Handles requests to the `/v1/chat/completions` endpoint.
+    """
+    logger.info(f"Handling chat completion request for model: {request.model}")
+
+    input_interactions: list[Interaction] = [
+        msg.to_interaction()
+        for msg in request.messages
+    ]
+
+    inference_kwargs = {
+        "max_completion_tokens": request.max_completion_tokens,
+        "temperature": request.temperature,
+        "top_p": request.top_p,
+        "top_k": request.top_k,
+        "min_p": request.min_p,
+        "parallel_tool_calls": request.parallel_tool_calls,
+        "tool_choice": request.tool_choice,
+        "tools": request.tools,
+        "response_format": request.response_format,
+    }
+
+    inference_kwargs = {k: v for k, v in inference_kwargs.items() if v is not None}
+
+    try:
+        generated_text, metadata = await engine(
+            input_interactions,
+            **inference_kwargs,
+        )
+    except InferenceError as e:
+        logger.error(f"Inference error processing request: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Inference failed: {e}",
+        ) from e
+    except NotImplementedError as e:
+        logger.error(f"Feature not implemented: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=str(e),
+        ) from e
+    except Exception as e:
+        logger.exception("An unexpected error occurred", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during completion.",
+        ) from e
+
+    finish_reason = metadata.get("finish_reason", "unknown")
+    prompt_tokens = metadata.get("prompt_tokens", 0)
+    completion_tokens = metadata.get("completion_tokens", 0)
+    total_tokens = metadata.get("total_tokens", 0)
+
+    choice = ChatCompletionChoice(
+        index=0,
+        message=ChatMessage(
+            role="assistant",
+            content=generated_text,
+        ),
+        finish_reason=finish_reason,
+    )
+
+    usage = ChatCompletionUsage(
+        input_tokens=prompt_tokens,
+        output_tokens=completion_tokens,
+        total_tokens=total_tokens,
+    )
+
+    response = ChatCompletionResponse(
+        model=request.model,
+        choices=[choice],
+        usage=usage,
+    )
+    logger.info(f"Chat completion request successful. ID: {response.id}")
+    return response
+
+
+---
+src/proxy_inference_engine/server/routes/completions.py
+---
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from proxy_inference_engine.engine.inference_engine import InferenceEngine
+from proxy_inference_engine.interaction import (
+    Interaction,
+    Role,
+)
+from proxy_inference_engine.server.dependencies import get_inference_engine
+from proxy_inference_engine.server.exceptions import InferenceError
+from proxy_inference_engine.server.models.completions import (
+    CompletionChoice,
+    CompletionRequest,
+    CompletionResponse,
+    CompletionUsage,
+)
+
+logger = logging.getLogger(__name__)
+
+completions_router = APIRouter()
+
+
+@completions_router.post(
+    "/completions",
+    response_model=CompletionResponse,
+    summary="Create a text completion",
+    tags=["Completions"],
+)
+async def handle_completion_request(
+    request: CompletionRequest,
+    engine: InferenceEngine = Depends(get_inference_engine),  # noqa: B008
+) -> CompletionResponse:
+    """
+    Handles requests to the `/completions` endpoint.
+
+    This endpoint uses the OpenAI v1 chat completions API.
+    """
+    logger.info(f"Handling completion request for model: {request.model}")
+
+    if request.stream:
+        logger.warning("Streaming requested but not supported.")
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Streaming is not supported in this version.",
+        )
+    if request.n > 1:
+        logger.warning("Request parameter 'n' > 1 is not supported, using n=1.")
+        # If best_of is also set, log a warning or raise error based on validation
+        if request.best_of is not None and request.best_of > 1:
+            logger.warning(
+                "Request parameters 'n' > 1 and 'best_of' > 1 are not supported, using n=1 and ignoring best_of."
+            )
+
+    input_interactions: list[Interaction]
+    if isinstance(request.prompt, str):
+        input_interactions = [
+            Interaction.simple(
+                role=Role.USER,
+                content=request.prompt,
+            )
+        ]
+    elif isinstance(request.prompt, list) and len(request.prompt) > 0:
+        logger.warning(
+            "Batch prompt input received, using only the first prompt in this version."
+        )
+        input_interactions = [
+            Interaction.simple(
+                role=Role.USER,
+                content=request.prompt[0],
+            )
+        ]
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid prompt format. Expecting string or list of strings.",
+        )
+
+    inference_kwargs = {
+        "max_completion_tokens": request.max_completion_tokens,
+        "temperature": request.temperature,
+        "top_p": request.top_p,
+        "top_k": request.top_k,
+        "min_p": request.min_p
+    }
+    
+    try:
+        generated_text, metadata = await engine(
+            input_interactions,
+            **inference_kwargs,
+        )
+    except InferenceError as e:
+        logger.error(f"Inference error processing request: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Inference failed: {e}",
+        ) from e
+    except NotImplementedError as e:
+        logger.error(f"Feature not implemented: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=str(e),
+        ) from e
+    except Exception as e:
+        logger.exception("An unexpected error occurred", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during completion.",
+        ) from e
+
+    finish_reason = metadata.get("finish_reason", "unknown")
+    prompt_tokens = metadata.get("prompt_tokens", 0)
+    completion_tokens = metadata.get("completion_tokens", 0)
+    total_tokens = metadata.get("total_tokens", 0)
+
+    choice = CompletionChoice(
+        index=0,
+        text=generated_text,
+        logprobs=None,
+        finish_reason=finish_reason,
+    )
+
+    usage = CompletionUsage(
+        input_tokens=prompt_tokens,
+        output_tokens=completion_tokens,
+        total_tokens=total_tokens,
+    )
+
+    response = CompletionResponse(
+        model=request.model,
+        choices=[choice],
+        usage=usage,
+    )
+    logger.info(f"Completion request successful. ID: {response.id}")
+    return response
+
+
+---
+src/proxy_inference_engine/server/routes/responses.py
+---
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from proxy_inference_engine.engine import InferenceEngine
+from proxy_inference_engine.interaction import Interaction, Role
+from proxy_inference_engine.server.dependencies import get_inference_engine
+from proxy_inference_engine.server.exceptions import InferenceError
+from proxy_inference_engine.server.models.responses import (
+    OutputMessage,
+    OutputTextContent,
+    ResponseObject,
+    ResponseRequest,
+    ResponseUsage,
+)
+
+logger = logging.getLogger(__name__)
+
+responses_router = APIRouter()
+
+
+@responses_router.post(
+    "/responses",
+    response_model=ResponseObject,
+    summary="Create a model response",
+    tags=["Responses"],
+)
+async def handle_response_request(
+    request: ResponseRequest,
+    engine: InferenceEngine = Depends(get_inference_engine),  # noqa: B008
+) -> ResponseObject:
+    """
+    Handles requests to the `/v1/responses` endpoint (MVP: text-only).
+    """
+    logger.info(f"Handling response request for model: {request.model}")
+
+    input_interactions: list[Interaction] = []
+    if request.instructions:
+        input_interactions.append(
+            Interaction.simple(role=Role.SYSTEM, content=request.instructions)
+        )
+    input_interactions.append(
+        Interaction.simple(role=Role.USER, content=request.input)
+    )
+
+    inference_kwargs = {
+        "max_completion_tokens": request.max_output_tokens,
+        "temperature": request.temperature,
+        "top_p": request.top_p,
+        "top_k": request.top_k,
+        "min_p": request.min_p,
+        "parallel_tool_calls": request.parallel_tool_calls,
+        "tool_choice": request.tool_choice,
+        "tools": request.tools,
+        "response_format": request.text.format if request.text else None,
+    }
+    inference_kwargs = {k: v for k, v in inference_kwargs.items() if v is not None}
+
+    try:
+        generated_text, metadata = await engine(
+            input_interactions,
+            **inference_kwargs,
+        )
+    except InferenceError as e:
+        logger.error(f"Inference error processing request: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Inference failed: {e}",
+        ) from e
+    except NotImplementedError as e:
+        logger.error(f"Feature not implemented: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=str(e),
+        ) from e
+    except Exception as e:
+        logger.exception("An unexpected error occurred", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during completion.",
+        ) from e
+
+    prompt_tokens = metadata.get("prompt_tokens", 0)
+    completion_tokens = metadata.get("completion_tokens", 0)
+    total_tokens = metadata.get("total_tokens", 0)
+
+    output_content = OutputTextContent(text=generated_text)
+    response_message = OutputMessage(content=[output_content])
+    usage = ResponseUsage(
+        input_tokens=prompt_tokens,
+        output_tokens=completion_tokens,
+        total_tokens=total_tokens,
+    )
+
+    response = ResponseObject(
+        model=request.model,
+        output=[response_message],
+        usage=usage,
+    )
+    logger.info(f"Response request successful. ID: {response.id}")
+    return response
+
+
+---
+src/proxy_inference_engine/models/__init__.py
+---
+from proxy_inference_engine.models.utils import (
+    get_model_architecture,
+    get_model_path,
+    load,
+    load_model,
+)
+
+__all__ = [
+    "get_model_architecture",
+    "get_model_path",
+    "load",
+    "load_model",
+]
+
+
+---
+src/proxy_inference_engine/models/base.py
+---
+from typing import Any
+
+import mlx.core as mx
+from mlx.utils import tree_map
+from pydantic import BaseModel, ConfigDict
+
+from proxy_inference_engine.cache.kv_cache import QuantizedKVCache
+
+
+class BaseModelArgs(BaseModel):
+    """
+    Base configuration class for models, leveraging Pydantic for robust
+    type validation and settings management.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+def create_causal_mask(
+    N: int,
+    offset: int = 0,
+    window_size: int | None = None,
+    lengths: mx.array | None = None,
+):
+    rinds = mx.arange(offset + N)
+    linds = mx.arange(offset, offset + N) if offset else rinds
+    linds = linds[:, None]
+    rinds = rinds[None]
+    mask = linds < rinds
+    if window_size is not None:
+        mask = mask | (linds > rinds + window_size)
+    if lengths is not None:
+        lengths = lengths[:, None, None, None]
+        mask = mask | (rinds >= lengths)
+    return mask * -1e9
+
+
+def create_attention_mask(h: mx.array, cache: Any | None = None):
+    T = h.shape[1]
+    if T > 1:
+        window_size = None
+        offset = 0
+        if cache is not None and len(cache) > 0:
+            c = cache[0]
+            if hasattr(c, "max_size"):
+                offset = min(c.max_size, c.offset)
+                window_size = c.max_size
+            else:
+                offset = c.offset
+        mask = create_causal_mask(T, offset, window_size=window_size)
+        mask = mask.astype(h.dtype)
+    else:
+        mask = None
+    return mask
+
+
+def quantized_scaled_dot_product_attention(
+    queries: mx.array,
+    q_keys: tuple[mx.array, mx.array, mx.array],
+    q_values: tuple[mx.array, mx.array, mx.array],
+    scale: float,
+    mask: mx.array | None,
+    group_size: int = 64,
+    bits: int = 8,
+) -> mx.array:
+    B, n_q_heads, L, D = queries.shape
+    n_kv_heads = q_keys[0].shape[-3]
+    n_repeats = n_q_heads // n_kv_heads
+
+    queries *= scale
+
+    if n_repeats > 1:
+        queries = mx.reshape(queries, (B, n_kv_heads, n_repeats, L, D))
+        q_keys = tree_map(lambda x: mx.expand_dims(x, axis=-3), q_keys)
+        q_values = tree_map(lambda x: mx.expand_dims(x, axis=-3), q_values)
+
+    scores = mx.quantized_matmul(
+        queries, *q_keys, transpose=True, group_size=group_size, bits=bits
+    )
+    if mask is not None:
+        scores += mask
+    scores = mx.softmax(scores, axis=-1)
+    out = mx.quantized_matmul(
+        scores, *q_values, transpose=False, group_size=group_size, bits=bits
+    )
+
+    if n_repeats > 1:
+        out = mx.reshape(out, (B, n_q_heads, L, D))
+
+    return out
+
+
+def scaled_dot_product_attention(
+    queries,
+    keys,
+    values,
+    cache,
+    scale: float,
+    mask: mx.array | None,
+) -> mx.array:
+    if isinstance(cache, QuantizedKVCache):
+        return quantized_scaled_dot_product_attention(
+            queries,
+            keys,
+            values,
+            scale=scale,
+            mask=mask,
+            group_size=cache.group_size,
+            bits=cache.bits,
+        )
+    else:
+        return mx.fast.scaled_dot_product_attention(
+            queries, keys, values, scale=scale, mask=mask
+        )
+
+
+---
+src/proxy_inference_engine/models/utils.py
+---
+import glob
+import importlib
+import json
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import mlx.core as mx
+import mlx.nn as nn
+from huggingface_hub import snapshot_download
+from pydantic import BaseModel
+from transformers.models.auto.tokenization_auto import AutoTokenizer
+from transformers.tokenization_utils import PreTrainedTokenizer
+from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class LargeLanguageModel:
+    model: nn.Module
+    hf_tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast
+    tokenizer_config: dict[str, Any]
+
+
+def load(path_or_hf_repo: str) -> LargeLanguageModel:
+    """
+    Load the model and tokenizer from a given path or a huggingface repository.
+
+    Args:
+        path_or_hf_repo (Path): The path or the huggingface repository to load the model from.
+    Returns:
+        Tuple[nn.Module, TokenizerWrapper]: A tuple containing the loaded model and tokenizer.
+
+    Raises:
+        FileNotFoundError: If config file or safetensors are not found.
+        ValueError: If model class or args class are not found.
+    """
+    model_path = get_model_path(path_or_hf_repo)
+    model, tokenizer_config = load_model(model_path.as_posix())
+    hf_tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+    return LargeLanguageModel(
+        model=model,
+        hf_tokenizer=hf_tokenizer,
+        tokenizer_config=tokenizer_config,
+    )
+
+
+def load_model(model_path: str) -> tuple[nn.Module, dict[str, Any]]:
+    """
+    Load and initialize the model from a given path.
+
+    Args:
+        model_path (Path): The path to load the model from.
+    Returns:
+        nn.Module: The loaded and initialized model.
+    """
+    path = get_model_path(model_path)
+
+    weight_files = glob.glob(str(path / "model*.safetensors"))
+    weights = {}
+    for wf in weight_files:
+        weights.update(mx.load(wf))
+
+    with open(path / "config.json") as f:
+        model_config = json.load(f)
+
+    architecture = get_model_architecture(model_config)
+    if issubclass(architecture.ModelArgs, BaseModel):
+        model_args = architecture.ModelArgs(**model_config)
+    else:
+        model_args = architecture.ModelArgs.from_dict(model_config)
+    model: nn.Module = architecture.Model(model_args)
+
+    if hasattr(model, "sanitize") and model.sanitize is not None:
+        weights = model.sanitize(weights)
+
+    if (
+        hasattr(model, "language_model")
+        and model.language_model is not None
+        and hasattr(model.language_model, "sanitize")
+        and model.language_model.sanitize is not None
+    ):
+        weights = model.language_model.sanitize(weights)
+    if (
+        hasattr(model, "vision_tower")
+        and model.vision_tower is not None
+        and hasattr(model.vision_tower, "sanitize")
+        and model.vision_tower.sanitize is not None
+    ):
+        weights = model.vision_tower.sanitize(weights)
+
+    # Quantization
+    quantization: dict[str, Any] = model_config.get("quantization", {})
+    if quantization:
+
+        def should_quantize(path: str, module: nn.Module) -> bool:
+            valid_weights = (
+                hasattr(module, "weight")
+                and module.weight is not None
+                and module.weight.shape[-1] % 64 == 0
+            )
+            return (
+                hasattr(module, "to_quantized")
+                and valid_weights
+                and f"{path}.scales" in weights
+            )
+
+        nn.quantize(model, **quantization, class_predicate=should_quantize)
+
+    model.load_weights(list(weights.items()))
+    assert isinstance(model, nn.Module)
+    mx.eval(model.parameters())
+    model.eval()
+
+    try:
+        with open(path / "tokenizer_config.json") as f:
+            tokenizer_config = json.load(f)
+    except FileNotFoundError:
+        logger.warning(f"Tokenizer config not found for model at {path}")
+        tokenizer_config = {}
+
+    return model, tokenizer_config
+
+
+def get_model_architecture(config: dict[str, Any]) -> ModuleType:
+    """
+    Retrieve the model and model args classes based on the configuration.
+
+    Args:
+        config (dict): The model configuration.
+
+    Returns:
+        A tuple containing the Model class and the ModelArgs class.
+    """
+    model_type = config["model_type"]
+    model_type = {
+        "gemma3": "gemma",
+        "mistral": "llama",
+        "phi-msft": "phixtral",
+        "falcon_mamba": "mamba",
+        "llama-deepseek": "llama",
+    }.get(model_type, model_type)
+
+    try:
+        architecture = importlib.import_module(
+            f"proxy_inference_engine.models.{model_type}"
+        )
+        return architecture
+    except ModuleNotFoundError:
+        try:
+            architecture = importlib.import_module(f"mlx_lm.models.{model_type}")
+            return architecture
+        except ModuleNotFoundError as e:
+            msg = f"Model type {model_type} not supported."
+            logging.error(msg)
+            raise ValueError(
+                "No model architecture found for the given model type."
+            ) from e
+
+
+def get_model_path(path_or_hf_repo: str, revision: str | None = None) -> Path:
+    """
+    Ensures the model is available locally. If the path does not exist locally,
+    it is downloaded from the Hugging Face Hub.
+
+    Args:
+        path_or_hf_repo (str): The local path or Hugging Face repository ID of the model.
+        revision (str, optional): A revision id which can be a branch name, a tag, or a commit hash.
+
+    Returns:
+        Path: The path to the model.
+    """
+    model_path = Path(path_or_hf_repo)
+
+    if not model_path.exists():
+        try:
+            model_path = Path(
+                snapshot_download(
+                    path_or_hf_repo,
+                    revision=revision,
+                    allow_patterns=[
+                        "*.json",
+                        "*.safetensors",
+                        "*.py",
+                        "tokenizer.model",
+                        "*.tiktoken",
+                        "*.txt",
+                    ],
+                )
+            )
+        except Exception as e:
+            raise ValueError(
+                f"Model not found for path or HF repo: {path_or_hf_repo}."
+            ) from e
+    return model_path
+
+
+def sanitize_weights(
+    model_obj: nn.Module,
+    weights: dict[str, mx.array],
+) -> dict[str, mx.array]:
+    """Helper function to sanitize weights if the model has a sanitize method"""
+    if hasattr(model_obj, "sanitize"):
+        assert model_obj.sanitize is not None
+        weights = model_obj.sanitize(weights)
+
+    return weights
+
+
+---
+src/proxy_inference_engine/models/gemma/__init__.py
+---
+from proxy_inference_engine.models.gemma.ensemble import Model, ModelArgs
+from proxy_inference_engine.models.gemma.language import LanguageModel
+from proxy_inference_engine.models.gemma.vision import VisionModel
+
+__all__ = ["LanguageModel", "Model", "ModelArgs", "VisionModel"]
+
+
+---
+src/proxy_inference_engine/models/gemma/ensemble.py
+---
+import mlx.core as mx
+import mlx.nn as nn
+
+from proxy_inference_engine.cache.kv_cache import BaseCache
+from proxy_inference_engine.models.base import BaseModelArgs
+from proxy_inference_engine.models.gemma.language import (
+    LanguageModel,
+    RMSNorm,
+    TextConfig,
+)
+from proxy_inference_engine.models.gemma.vision import VisionConfig, VisionModel
+
+
+class ModelArgs(BaseModelArgs):
+    text_config: TextConfig
+    vision_config: VisionConfig
+    model_type: str
+    vocab_size: int = 257152
+    image_token_index: int = 257152
+    hidden_size: int = 2048
+    pad_token_id: int | None = 0
+
+
+class Gemma3MultiModalProjector(nn.Module):
+    def __init__(self, config: ModelArgs):
+        super().__init__()
+        self.mm_input_projection_weight = mx.ones(
+            (config.vision_config.hidden_size, config.text_config.hidden_size)
+        )
+
+        self.mm_soft_emb_norm = RMSNorm(
+            config.vision_config.hidden_size, eps=config.vision_config.layer_norm_eps
+        )
+        self.patches_per_image = int(
+            config.vision_config.image_size // config.vision_config.patch_size
+        )
+        self.tokens_per_side = int(config.text_config.mm_tokens_per_image**0.5)
+        self.kernel_size = self.patches_per_image // self.tokens_per_side
+        self.avg_pool = nn.AvgPool2d(
+            kernel_size=self.kernel_size, stride=self.kernel_size
+        )
+
+    def __call__(self, vision_features: mx.array) -> mx.array:
+        batch_size, _, hidden_dim = vision_features.shape
+
+        # Reshape from [batch, hidden_dim, seq_len] to [batch, seq_len, patches, patches]
+        spatial_features = vision_features.transpose(0, 2, 1)
+        spatial_features = spatial_features.reshape(
+            batch_size, hidden_dim, self.patches_per_image, self.patches_per_image
+        )
+
+        # Transpose to [batch, patches, patches, hidden_dim] for pooling
+        spatial_features = spatial_features.transpose(0, 2, 3, 1)
+        # Apply average pooling to reduce spatial dimensions
+        downsampled_features = self.avg_pool(spatial_features)
+        # Reshape to [batch, tokens_per_image, hidden_dim]
+        downsampled_features = downsampled_features.transpose(0, 3, 1, 2).flatten(2)
+        downsampled_features = downsampled_features.transpose(0, 2, 1)
+
+        # Apply normalization
+        normalized_features = self.mm_soft_emb_norm(downsampled_features)
+
+        # Project to language model dimension space
+        projected_features = mx.einsum(
+            "btm,md->btd", normalized_features, self.mm_input_projection_weight
+        )
+
+        # Ensure output has same dtype as input
+        return projected_features.astype(vision_features.dtype)
+
+
+class Model(nn.Module):
+
+    def __init__(self, config: ModelArgs):
+        super().__init__()
+        self.config = config
+
+        self.vision_tower = VisionModel(config.vision_config)
+        self.language_model = LanguageModel(config.text_config)
+        self.multi_modal_projector = Gemma3MultiModalProjector(config)
+
+    def get_input_embeddings(
+        self,
+        input_ids: mx.array | None = None,
+        pixel_values: mx.array | None = None,
+        mask: mx.array | None = None,
+    ):
+        if pixel_values is None:
+            return self.language_model.model.embed_tokens(input_ids), None
+
+        inputs_embeds = self.language_model.model.embed_tokens(input_ids)
+
+        hidden_state, _, _ = self.vision_tower(
+            pixel_values.transpose(0, 2, 3, 1).astype(inputs_embeds.dtype),
+            output_hidden_states=True,
+        )
+
+        image_features = hidden_state[None, :].astype(pixel_values.dtype)
+        image_features = self.multi_modal_projector(image_features)
+
+        final_inputs_embeds, final_attention_mask_4d = (
+            self._prepare_inputs_for_multimodal(
+                image_features, inputs_embeds, input_ids, mask
+            )
+        )
+        return final_inputs_embeds, final_attention_mask_4d
+
+    def _prepare_inputs_for_multimodal(
+        self, image_features, inputs_embeds, input_ids, attention_mask
+    ):
+        _, _, embed_dim = image_features.shape
+
+        batch_size, sequence_length = input_ids.shape
+        scaled_image_features = image_features / (self.config.hidden_size**0.5)
+        final_embedding = mx.zeros((batch_size, sequence_length, embed_dim))
+
+        pad_token_id = self.config.pad_token_id
+        pad_token_id = pad_token_id if pad_token_id is not None else 0
+        text_mask = (input_ids != self.config.image_token_index) & (
+            input_ids != pad_token_id
+        )
+        image_mask = input_ids == self.config.image_token_index
+        pad_mask = input_ids == pad_token_id
+
+        # expand masks to match embedding dimension
+        text_mask_expanded = mx.expand_dims(text_mask, -1)
+        text_mask_expanded = mx.repeat(text_mask_expanded, embed_dim, axis=-1)
+        pad_mask_expanded = mx.expand_dims(pad_mask, -1)
+        pad_mask_expanded = mx.repeat(pad_mask_expanded, embed_dim, axis=-1)
+
+        # insert padding and text token embeddings
+        final_embedding = mx.where(text_mask_expanded, inputs_embeds, final_embedding)
+        final_embedding = mx.where(
+            pad_mask_expanded, mx.zeros_like(final_embedding), final_embedding
+        )
+        pad_size = final_embedding.shape[1] - scaled_image_features.shape[1]
+        scaled_image_features = mx.pad(
+            scaled_image_features, ((0, 0), (0, pad_size), (0, 0))
+        )
+        # insert image embeddings - the image mask is always less or equal to the sentence in length
+        image_mask_expanded = mx.expand_dims(image_mask, -1)
+        image_mask_expanded = mx.repeat(image_mask_expanded, embed_dim, axis=-1)
+        final_embedding = mx.where(
+            image_mask_expanded, scaled_image_features, final_embedding
+        )
+
+        final_embedding = mx.where(
+            pad_mask_expanded, mx.zeros_like(final_embedding), final_embedding
+        )
+
+        attention_mask_expanded_1 = mx.expand_dims(attention_mask, 1)
+        attention_mask_expanded_2 = mx.expand_dims(attention_mask, 2)
+        final_attention_mask_4d = attention_mask_expanded_1 * attention_mask_expanded_2
+        final_attention_mask_4d = final_attention_mask_4d
+        final_attention_mask_4d = mx.expand_dims(final_attention_mask_4d, 1)
+        final_embedding = mx.array(final_embedding)
+        return final_embedding, final_attention_mask_4d
+
+    def __call__(
+        self,
+        input_ids: mx.array,
+        pixel_values: mx.array | None = None,
+        mask: mx.array | None = None,
+        cache: list[BaseCache] | list[None] | None = None,
+        **kwargs,
+    ):
+        input_embeddings, final_attention_mask_4d = self.get_input_embeddings(
+            input_ids, pixel_values, mask
+        )
+
+        logits = self.language_model(
+            inputs=input_ids,
+            cache=cache,
+            inputs_embeds=input_embeddings,
+            # mask=final_attention_mask_4d, # TODO: Fix mask
+        )
+        return logits
+
+    @property
+    def layers(self):
+        return self.language_model.model.layers
+
+    @property
+    def head_dim(self):
+        return self.language_model.model.head_dim
+
+    @property
+    def n_kv_heads(self):
+        return self.language_model.model.n_kv_heads
+
+
+---
+src/proxy_inference_engine/models/gemma/language.py
+---
+from functools import partial
+from typing import Any
+
+import mlx.core as mx
+import mlx.nn as nn
+from pydantic import BaseModel
+
+from proxy_inference_engine.cache.kv_cache import BaseCache, KVCache, RotatingKVCache
+from proxy_inference_engine.models.base import create_attention_mask
+
+
+class RopeScaling(BaseModel):
+    factor: float
+    rope_type: str
+
+class TextConfig(BaseModel):
+    model_type: str
+    hidden_size: int
+    num_hidden_layers: int
+    intermediate_size: int
+    num_attention_heads: int = 8
+    head_dim: int = 256
+    rms_norm_eps: float = 1.0e-6
+    vocab_size: int = 262208
+    num_key_value_heads: int = 4
+    rope_global_base_freq: float = 1_000_000.0
+    rope_local_base_freq: float = 10_000.0
+    rope_traditional: bool = False
+    query_pre_attn_scalar: float = 0.0625
+    sliding_window: int = 1024
+    rope_scaling: RopeScaling | None = None
+    mm_tokens_per_image: int = 256
+    sliding_window_pattern: int = 6
+    pad_token_id: int | None = None
+
+@partial(mx.compile, shapeless=True)
+def clip_residual(x: mx.array, y: mx.array | None = None) -> mx.array:
+    bound = mx.finfo(mx.float16).max
+
+    if y is None:
+        if x.dtype == mx.float16:
+            return mx.clip(x.astype(mx.float32), -bound, bound).astype(mx.float16)
+
+        else:
+            return x
+
+    if x.dtype != mx.float16:
+        return x + y
+
+    return mx.clip(
+        x.astype(mx.float32) + y.astype(mx.float32), -bound, bound
+    ).astype(mx.float16)
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, dims: int, eps: float = 1e-5):
+        super().__init__()
+        self.weight = mx.ones((dims,))
+        self.eps = eps
+
+    def __call__(self, x):
+        return mx.fast.rms_norm(x, 1.0 + self.weight, self.eps)
+
+
+class Attention(nn.Module):
+    def __init__(self, config: TextConfig, layer_idx: int):
+        super().__init__()
+
+        dim = config.hidden_size
+        self.n_heads = n_heads = config.num_attention_heads
+        self.n_kv_heads = n_kv_heads = config.num_key_value_heads
+        self.repeats = n_heads // n_kv_heads
+        self.head_dim = head_dim = config.head_dim
+        self.layer_idx = layer_idx
+
+        self.scale = config.query_pre_attn_scalar**-0.5
+
+        self.q_proj = nn.Linear(dim, n_heads * head_dim, bias=False)
+        self.k_proj = nn.Linear(dim, n_kv_heads * head_dim, bias=False)
+        self.v_proj = nn.Linear(dim, n_kv_heads * head_dim, bias=False)
+        self.o_proj = nn.Linear(n_heads * head_dim, dim, bias=False)
+
+        self.q_norm = RMSNorm(dims=head_dim, eps=config.rms_norm_eps)
+        self.k_norm = RMSNorm(dims=head_dim, eps=config.rms_norm_eps)
+        self.is_sliding = (layer_idx + 1) % config.sliding_window_pattern != 0
+
+        self.rope = nn.RoPE(
+            head_dim,
+            traditional=config.rope_traditional,
+            base=(
+                config.rope_local_base_freq
+                if self.is_sliding
+                else config.rope_global_base_freq
+            ),
+        )
+
+    def __call__(
+        self,
+        x: mx.array,
+        mask: mx.array | None = None,
+        cache: Any | None = None,
+    ) -> mx.array:
+        B, L, _ = x.shape
+        queries, keys, values = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+        queries = queries.reshape(B, L, self.n_heads, -1).transpose(0, 2, 1, 3)
+
+        keys = keys.reshape(B, L, self.n_kv_heads, -1).transpose(0, 2, 1, 3)
+        values = values.reshape(B, L, self.n_kv_heads, -1).transpose(0, 2, 1, 3)
+
+        queries = self.q_norm(queries)
+        keys = self.k_norm(keys)
+
+        if cache is not None:
+            queries = self.rope(queries, offset=cache.offset)
+            keys = self.rope(keys, offset=cache.offset)
+            keys, values = cache.update_and_fetch(keys, values)
+        else:
+            queries = self.rope(queries)
+            keys = self.rope(keys)
+
+        # Sliding window
+        if mask is not None and isinstance(mask, mx.array):
+            if mask.shape[-1] != keys.shape[-2]:
+                mask = mask[..., -keys.shape[-2] :]
+
+        output = mx.fast.scaled_dot_product_attention(
+            queries, keys, values, scale=self.scale, mask=mask
+        )
+        output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
+        return self.o_proj(output)
+
+
+class MLP(nn.Module):
+    def __init__(self, dim, hidden_dim):
+        super().__init__()
+        self.gate_proj = nn.Linear(dim, hidden_dim, bias=False)
+        self.down_proj = nn.Linear(hidden_dim, dim, bias=False)
+        self.up_proj = nn.Linear(dim, hidden_dim, bias=False)
+
+    def __call__(self, x) -> mx.array:
+        # This should not be GELU approx, jax.nn.gelu
+        return self.down_proj(nn.gelu_approx(self.gate_proj(x)) * self.up_proj(x))
+
+
+class TransformerBlock(nn.Module):
+    def __init__(self, config: TextConfig, layer_idx: int):
+        super().__init__()
+        self.num_attention_heads = config.num_attention_heads
+        self.hidden_size = config.hidden_size
+        self.self_attn = Attention(config, layer_idx)
+        self.mlp = MLP(config.hidden_size, config.intermediate_size)
+        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.pre_feedforward_layernorm = RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.post_feedforward_layernorm = RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+
+    def __call__(
+        self,
+        x: mx.array,
+        mask: mx.array | None = None,
+        cache: Any | None = None,
+    ) -> mx.array:
+        x = clip_residual(x)
+
+        # Self-attention block
+        r = self.self_attn(self.input_layernorm(x), mask, cache)
+        h = self.post_attention_layernorm(r)
+
+        h = clip_residual(x + h)
+
+        # MLP block
+        r = self.mlp(self.pre_feedforward_layernorm(h))
+        out = self.post_feedforward_layernorm(r)
+
+        return clip_residual(h + out)
+
+
+class Gemma3Model(nn.Module):
+    def __init__(self, config: TextConfig):
+        super().__init__()
+        self.config = config
+        self.vocab_size = config.vocab_size
+        self.num_hidden_layers = config.num_hidden_layers
+        assert self.vocab_size > 0
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.layers = [
+            TransformerBlock(config=config, layer_idx=layer_idx)
+            for layer_idx in range(config.num_hidden_layers)
+        ]
+        self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+
+    def __call__(
+        self,
+        inputs: mx.array,
+        inputs_embeds: mx.array | None = None,
+        mask: mx.array | None = None,
+        cache: list[BaseCache] | list[None] | None = None,
+    ):
+        if inputs_embeds is None:
+            h = self.embed_tokens(inputs)
+        else:
+            h = inputs_embeds
+
+        h *= mx.array(self.config.hidden_size**0.5, mx.bfloat16).astype(h.dtype)
+
+        if cache is None:
+            cache = [None] * len(self.layers)
+
+        if mask is None:
+            j = self.config.sliding_window_pattern
+            full_mask = create_attention_mask(h, cache[j - 1 : j])
+            sliding_window_mask = create_attention_mask(h, cache)
+
+        for i, (layer, c) in enumerate(zip(self.layers, cache, strict=True)):
+            is_global = (
+                i % self.config.sliding_window_pattern
+                == self.config.sliding_window_pattern - 1
+            )
+
+            local_mask = mask
+            if mask is None and is_global:
+                local_mask = full_mask
+            elif mask is None:
+                local_mask = sliding_window_mask
+
+            h = layer(h, local_mask, c)
+
+        return self.norm(h)
+
+
+class LanguageModel(nn.Module):
+    def __init__(self, config: TextConfig):
+        super().__init__()
+        self.config = config
+        self.model = Gemma3Model(self.config)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+    def __call__(
+        self,
+        inputs: mx.array,
+        inputs_embeds: mx.array | None = None,
+        mask: mx.array | None = None,
+        cache: list[BaseCache] | list[None] | None = None,
+    ):
+        out = self.model(inputs, inputs_embeds=inputs_embeds, mask=mask, cache=cache)
+        out = self.lm_head(out)
+        return out
+
+    def sanitize(self, weights: dict[str, mx.array]) -> dict[str, mx.array]:
+        if "lm_head.weight" not in weights:
+            weights["language_model.lm_head.weight"] = weights[
+                "language_model.model.embed_tokens.weight"
+            ]
+        return {
+            k: v for k, v in weights.items() if "self_attn.rotary_emb.inv_freq" not in k
+        }
+
+    @property
+    def layers(self):
+        return self.model.layers
+
+    @property
+    def head_dim(self):
+        return self.config.head_dim
+
+    @property
+    def n_kv_heads(self):
+        return self.config.num_key_value_heads
+
+    def make_cache(self):
+        caches = []
+        for i in range(self.config.num_hidden_layers):
+            if (
+                i % self.config.sliding_window_pattern
+                == self.config.sliding_window_pattern - 1
+            ):
+                caches.append(KVCache())
+            else:
+                caches.append(
+                    RotatingKVCache(
+                        max_size=self.config.sliding_window,
+                        keep=0,
+                    )
+                )
+        return caches
+
+
+---
+src/proxy_inference_engine/models/gemma/vision.py
+---
+import mlx.core as mx
+import mlx.nn as nn
+from pydantic import BaseModel
+
+
+class VisionConfig(BaseModel):
+    model_type: str
+    num_hidden_layers: int
+    hidden_size: int
+    intermediate_size: int
+    num_attention_heads: int
+    patch_size: int
+    image_size: int = 224
+    num_channels: int = 3
+    layer_norm_eps: float = 1e-6
+
+
+def check_array_shape(arr):
+    shape = arr.shape
+
+    # Check if the shape has 4 dimensions
+    if len(shape) != 4:
+        return False
+
+    out_channels, kH, KW, _ = shape
+
+    # Check if out_channels is the largest, and kH and KW are the same
+    if (out_channels >= kH) and (out_channels >= KW) and (kH == KW):
+        return True
+    else:
+        return False
+
+class AveragePool2D(nn.Module):
+    """Applies 4x4 average pooling and reshaping."""
+
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+    def __call__(self, x):
+        """Applies 4x4 average pooling and reshaping."""
+        batch_size, seq_len, channels = x.shape
+        width = int(seq_len**0.5)
+        if width * width != seq_len:
+            raise ValueError(
+                f"Sequence length {seq_len} is not a perfect square. Cannot reshape to a square image."
+            )
+        # Bx(64^2)x1152 -> Bx1152x(64^2) -> Bx1152x64x64
+        x = x.transpose(1, 2).reshape(batch_size, channels, width, width)
+        # Bx1152x64x64-> Bx1152x16x16
+        x = nn.AvgPool2d(kernel_size=4, stride=4)(x)
+        # Bx1152x64x64-> Bx1152x256 -> Bx256x1152
+        x = x.flatten(2).transpose(1, 2)
+        return x
+
+
+class Attention(nn.Module):
+    def __init__(
+        self,
+        dims: int,
+        num_heads: int,
+        query_input_dims: int | None = None,
+        key_input_dims: int | None = None,
+        value_input_dims: int | None = None,
+        value_dims: int | None = None,
+        value_output_dims: int | None = None,
+        bias: bool = True,
+    ):
+        super().__init__()
+
+        if (dims % num_heads) != 0:
+            raise ValueError(
+                "The input feature dimensions should be divisible by the "
+                f"number of heads ({dims} % {num_heads}) != 0"
+            )
+
+        query_input_dims = query_input_dims or dims
+        key_input_dims = key_input_dims or dims
+        value_input_dims = value_input_dims or key_input_dims
+        value_dims = value_dims or dims
+        value_output_dims = value_output_dims or dims
+
+        self.num_heads = num_heads
+        head_dim = dims // num_heads
+        self.scale = head_dim**-0.5
+
+        self.q_proj = nn.Linear(query_input_dims, dims, bias=bias)
+        self.k_proj = nn.Linear(key_input_dims, dims, bias=bias)
+        self.v_proj = nn.Linear(value_input_dims, value_dims, bias=bias)
+        self.out_proj = nn.Linear(value_dims, value_output_dims, bias=bias)
+
+    def __call__(self, x, mask=None):
+        queries = self.q_proj(x)
+        keys = self.k_proj(x)
+        values = self.v_proj(x)
+
+        num_heads = self.num_heads
+        B, L, D = queries.shape
+        _, S, _ = keys.shape
+        queries = queries.reshape(B, L, num_heads, -1).transpose(0, 2, 1, 3)
+        keys = keys.reshape(B, S, num_heads, -1).transpose(0, 2, 1, 3)
+        values = values.reshape(B, S, num_heads, -1).transpose(0, 2, 1, 3)
+
+        output = mx.fast.scaled_dot_product_attention(
+            queries, keys, values, scale=self.scale, mask=mask
+        )
+        output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
+        return self.out_proj(output)
+
+
+class MLP(nn.Module):
+    def __init__(self, config: VisionConfig):
+        super().__init__()
+        self.activation_fn = nn.GELU(approx="precise")
+        self.fc1 = nn.Linear(config.hidden_size, config.intermediate_size, bias=True)
+        self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size, bias=True)
+
+    def __call__(self, x: mx.array) -> mx.array:
+        x = self.fc1(x)
+        x = self.activation_fn(x)
+        x = self.fc2(x)
+        return x
+
+
+class EncoderLayer(nn.Module):
+    def __init__(self, config: VisionConfig):
+        super().__init__()
+        self.embed_dim = config.hidden_size
+        self.self_attn = Attention(
+            config.hidden_size, config.num_attention_heads, bias=True
+        )
+        self.layer_norm1 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
+        self.mlp = MLP(config)
+        self.layer_norm2 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
+
+    def __call__(self, x: mx.array, mask: mx.array | None = None) -> mx.array:
+        r = self.self_attn(self.layer_norm1(x), mask)
+        h = x + r
+        r = self.mlp(self.layer_norm2(h))
+        return h + r
+
+
+class Encoder(nn.Module):
+    def __init__(self, config: VisionConfig):
+        super().__init__()
+        self.layers = [EncoderLayer(config) for _ in range(config.num_hidden_layers)]
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        output_hidden_states: bool = False,
+        mask: mx.array | None = None,
+    ) -> tuple[mx.array, tuple[mx.array, ...] | None]:
+        collected_hidden_states = (hidden_states,) if output_hidden_states else None
+
+        for layer in self.layers:
+            hidden_states = layer(hidden_states, mask=mask)
+            if output_hidden_states:
+                assert collected_hidden_states is not None
+                collected_hidden_states = (*collected_hidden_states, hidden_states)
+
+        if output_hidden_states:
+            return hidden_states[0], collected_hidden_states
+        else:
+            return hidden_states[0], None
+
+
+class VisionEmbeddings(nn.Module):
+    def __init__(self, config: VisionConfig):
+        super().__init__()
+        self.config = config
+        self.embed_dim = config.hidden_size
+        self.image_size = config.image_size
+        self.patch_size = config.patch_size
+
+        self.patch_embedding = nn.Conv2d(
+            in_channels=config.num_channels,
+            out_channels=self.embed_dim,
+            kernel_size=self.patch_size,
+            stride=self.patch_size,
+        )
+
+        self.num_patches = (self.image_size // self.patch_size) ** 2
+        self.num_positions = self.num_patches
+        self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
+
+    def __call__(self, x: mx.array) -> mx.array:
+        patch_embeddings = self.patch_embedding(x)
+        patch_embeddings = mx.flatten(patch_embeddings, start_axis=1, end_axis=2)
+        position_ids = mx.array(mx.arange(self.num_positions)[None, :])
+        embeddings = patch_embeddings
+        embeddings += self.position_embedding(position_ids)
+        return embeddings
+
+
+class SigLipVisionModel(nn.Module):
+    def __init__(self, config: VisionConfig):
+        super().__init__()
+        self.embeddings = VisionEmbeddings(config)
+        self.encoder = Encoder(config)
+        self.post_layernorm = nn.LayerNorm(config.hidden_size)
+        self.avgpool = AveragePool2D(config)
+
+    def __call__(
+        self,
+        x: mx.array,
+        output_hidden_states: bool | None = None,
+    ) -> mx.array:
+        x = self.embeddings(x)
+
+        out, hidden_states = self.encoder(
+            hidden_states=x,
+            output_hidden_states=output_hidden_states or False,
+            mask=None,
+        )
+
+        pooler_output = self.post_layernorm(out)
+        return self.avgpool(pooler_output)
+
+
+class VisionModel(nn.Module):
+    def __init__(self, config: VisionConfig):
+        super().__init__()
+        self.vision_model = SigLipVisionModel(config)
+
+    def __call__(
+        self, x: mx.array, output_hidden_states: bool | None = None
+    ) -> mx.array:
+        return self.vision_model(x, output_hidden_states)
+
+    def sanitize(self, weights: dict[str, mx.array]) -> dict[str, mx.array]:
+        sanitized_weights = {}
+        for k, v in weights.items():
+            if "patch_embedding.weight" in k:
+                # PyTorch conv2d weight tensors have shape:
+                #   [out_channels, in_channels, kH, KW]
+                # MLX conv2d expects the weight be of shape:
+                #   [out_channels, kH, KW, in_channels]
+                if check_array_shape(v):
+                    sanitized_weights[k] = v
+                else:
+                    sanitized_weights[k] = v.transpose(0, 2, 3, 1)
+            else:
+                sanitized_weights[k] = v
+
+        return sanitized_weights
+
+
+---
+src/proxy_inference_engine/models/intern/__init__.py
+---
+from proxy_inference_engine.models.intern.ensemble import Model, ModelArgs
+from proxy_inference_engine.models.intern.language import LanguageModel
+from proxy_inference_engine.models.intern.vision import VisionModel
+
+__all__ = ["LanguageModel", "Model", "ModelArgs", "VisionModel"]
+
+
+---
+src/proxy_inference_engine/models/intern/ensemble.py
+---
+from typing import cast
+
+import mlx.core as mx
+import mlx.nn as nn
+
+from proxy_inference_engine.cache.kv_cache import BaseCache
+from proxy_inference_engine.models.base import BaseModelArgs
+from proxy_inference_engine.models.intern.language import LanguageModel, TextConfig
+from proxy_inference_engine.models.intern.vision import VisionConfig, VisionModel
+
+
+class ModelArgs(BaseModelArgs):
+    text_config: TextConfig
+    vision_config: VisionConfig
+    model_type: str
+    image_token_id: int = 151655
+    video_token_id: int = 151656
+    vision_start_token_id: int = 151652
+    vision_end_token_id: int = 151653
+    vision_token_id: int = 151654
+    vision_feature_select_strategy: str = "default"
+    vision_feature_layer: int = -2
+    vocab_size: int = 32000
+
+
+class Model(nn.Module):
+    def __init__(self, config: ModelArgs):
+        super().__init__()
+        self.config = config
+        self.vision_tower = VisionModel(config.vision_config)
+        self.language_model = LanguageModel(config.text_config)
+
+    def get_input_embeddings(
+        self,
+        input_ids: mx.array | None = None,
+        pixel_values: mx.array | None = None,
+        image_grid_thw: mx.array | None = None,
+    ):
+        if pixel_values is None:
+            return self.language_model.model.embed_tokens(input_ids)
+
+        dtype = self.vision_tower.patch_embed.proj.weight.dtype
+        pixel_values = pixel_values.astype(dtype)
+
+        # Get the input embeddings from the language model
+        inputs_embeds = self.language_model.model.embed_tokens(input_ids)
+
+        # Get the ouptut hidden states from the vision model
+        hidden_states = self.vision_tower(
+            pixel_values, image_grid_thw, output_hidden_states=False
+        )
+
+        if hidden_states.ndim == 2:
+            hidden_states = hidden_states[None, :, :]
+
+        # Insert special image tokens in the input_ids
+        final_inputs_embeds = self._merge_input_ids_with_image_features(
+            hidden_states, inputs_embeds, input_ids
+        )
+        return final_inputs_embeds
+
+    def _merge_input_ids_with_image_features(
+        self, image_features, inputs_embeds, input_ids
+    ):
+        image_token_id = self.config.image_token_id
+        video_token_id = self.config.video_token_id
+
+        # Identify positions of image tokens (assuming batch size 1)
+        image_positions = input_ids == image_token_id
+        num_images = mx.sum(image_positions.astype(mx.int32))
+
+        # Fallback to video token if no image token found
+        num_images_val: int = cast(int, num_images.item())
+        if num_images_val == 0:
+            image_positions = input_ids == video_token_id
+            num_images = mx.sum(image_positions.astype(mx.int32))
+            num_images_val = cast(int, num_images.item())
+
+        # Replace token embeddings with image features if any were found
+        if num_images_val > 0:
+            seq_len = input_ids.shape[1]
+            positions_int = image_positions.astype(mx.int32)
+            # Use argsort to find indices: True (1) values end up at the end after sorting
+            sorted_indices = mx.argsort(positions_int, axis=1)
+            # Extract indices corresponding to image tokens (assumes batch size 1)
+            image_indices = sorted_indices[0, seq_len - num_images_val :]
+
+            # Perform in-place update (assumes bs=1 for inputs/features)
+            inputs_embeds[0, image_indices] = image_features[0]
+
+        return inputs_embeds
+
+    def __call__(
+        self,
+        input_ids: mx.array,
+        pixel_values: mx.array | None = None,
+        cache: list[BaseCache] | list[None] | None = None,
+        **kwargs,
+    ):
+        image_grid_thw = kwargs.pop("image_grid_thw", None)
+        # second_per_grid_ts = kwargs.pop("second_per_grid_ts", None)
+        video_grid_thw = kwargs.pop("video_grid_thw", None)
+        # position_ids = kwargs.pop("position_ids", None)
+        grid_thw = image_grid_thw if image_grid_thw is not None else video_grid_thw
+
+        inputs_embeds = self.get_input_embeddings(input_ids, pixel_values, grid_thw)
+
+        logits = self.language_model(None, cache=cache, inputs_embeds=inputs_embeds)
+        return logits
+
+    @property
+    def layers(self):
+        return self.language_model.model.layers
+
+    @property
+    def head_dim(self):
+        return self.language_model.model.head_dim
+
+    @property
+    def n_kv_heads(self):
+        return self.language_model.model.n_kv_heads
+
+
+---
+src/proxy_inference_engine/models/intern/language.py
+---
+import mlx.core as mx
+import mlx.nn as nn
+from pydantic import BaseModel
+
+from proxy_inference_engine.cache.kv_cache import BaseCache
+from proxy_inference_engine.models.base import create_attention_mask
+
+
+class TextConfig(BaseModel):
+    model_type: str
+    hidden_size: int
+    num_hidden_layers: int
+    intermediate_size: int
+    num_attention_heads: int
+    rms_norm_eps: float
+    vocab_size: int
+    num_key_value_heads: int | None = None
+    max_position_embeddings: int | None = 128000
+    rope_theta: float = 1000000.0
+    rope_traditional: bool = False
+    rope_scaling: dict[str, float | str] | None = None
+    tie_word_embeddings: bool = True
+
+    def __post_init__(self):
+        if self.num_key_value_heads is None:
+            self.num_key_value_heads = self.num_attention_heads
+
+        if self.rope_scaling:
+            required_keys = {"mrope_section", "type"}
+            if not all(key in self.rope_scaling for key in required_keys):
+                raise ValueError(f"rope_scaling must contain keys {required_keys}")
+
+            if self.rope_scaling["type"] not in ["mrope", "default"]:
+                raise ValueError("rope_scaling type must be 'mrope' or 'default'")
+
+class Attention(nn.Module):
+    def __init__(self, args: TextConfig):
+        super().__init__()
+
+        dim = args.hidden_size
+        self.n_heads = n_heads = args.num_attention_heads
+        assert args.num_key_value_heads is not None
+        self.n_kv_heads = n_kv_heads = args.num_key_value_heads
+
+        self.head_dim = head_dim = args.hidden_size // n_heads
+        self.scale = head_dim**-0.5
+
+        self.q_proj = nn.Linear(dim, n_heads * head_dim, bias=True)
+        self.k_proj = nn.Linear(dim, n_kv_heads * head_dim, bias=True)
+        self.v_proj = nn.Linear(dim, n_kv_heads * head_dim, bias=True)
+        self.o_proj = nn.Linear(n_heads * head_dim, dim, bias=False)
+
+        self.rotary_emb = nn.RoPE(
+            head_dim,
+            base=args.rope_theta,
+            traditional=args.rope_traditional,
+        )
+
+    def __call__(
+        self,
+        x: mx.array,
+        mask: mx.array | None = None,
+        cache: BaseCache | None = None,
+    ) -> mx.array:
+        B, L, D = x.shape
+
+        queries, keys, values = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+
+        # Prepare the queries, keys and values for the attention computation
+        queries = queries.reshape(B, L, self.n_heads, self.head_dim).transpose(
+            0, 2, 1, 3
+        )
+        keys = keys.reshape(B, L, self.n_kv_heads, self.head_dim).transpose(0, 2, 1, 3)
+        values = values.reshape(B, L, self.n_kv_heads, self.head_dim).transpose(
+            0, 2, 1, 3
+        )
+
+        offset = cache.offset if cache else 0
+
+        if mask is not None:
+            mask = mask[..., : keys.shape[-2]]
+            assert mask is not None and mask.shape[-1] >= keys.shape[-2], (
+                "Attention mask shorter than seq length"
+            )
+
+        queries = self.rotary_emb(queries, offset=offset)
+        keys = self.rotary_emb(keys, offset=offset)
+
+        if cache is not None:
+            keys, values = cache.update_and_fetch(keys, values)
+
+        output = mx.fast.scaled_dot_product_attention(
+            queries, keys, values, scale=self.scale, mask=mask
+        )
+        output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
+        return self.o_proj(output)
+
+
+class MLP(nn.Module):
+    def __init__(self, dim, hidden_dim):
+        super().__init__()
+        self.gate_proj = nn.Linear(dim, hidden_dim, bias=False)
+        self.down_proj = nn.Linear(hidden_dim, dim, bias=False)
+        self.up_proj = nn.Linear(dim, hidden_dim, bias=False)
+
+    def __call__(self, x) -> mx.array:
+        return self.down_proj(nn.silu(self.gate_proj(x)) * self.up_proj(x))
+
+
+class Qwen2VLDecoderLayer(nn.Module):
+    def __init__(self, args: TextConfig):
+        super().__init__()
+        self.num_attention_heads = args.num_attention_heads
+        self.hidden_size = args.hidden_size
+        self.self_attn = Attention(args)
+        self.mlp = MLP(args.hidden_size, args.intermediate_size)
+        self.input_layernorm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
+        self.post_attention_layernorm = nn.RMSNorm(
+            args.hidden_size, eps=args.rms_norm_eps
+        )
+        self.args = args
+
+    def __call__(
+        self,
+        x: mx.array,
+        mask: mx.array | None = None,
+        cache: BaseCache | None = None,
+    ) -> mx.array:
+        r = self.self_attn(self.input_layernorm(x), mask, cache)
+        h = x + r
+        r = self.mlp(self.post_attention_layernorm(h))
+        out = h + r
+        return out
+
+
+class Qwen2Model(nn.Module):
+    def __init__(self, args: TextConfig):
+        super().__init__()
+        self.args = args
+        self.vocab_size = args.vocab_size
+        self.num_hidden_layers = args.num_hidden_layers
+        assert self.vocab_size > 0
+        self.embed_tokens = nn.Embedding(args.vocab_size, args.hidden_size)
+        self.layers = [
+            Qwen2VLDecoderLayer(args=args) for _ in range(args.num_hidden_layers)
+        ]
+        self.norm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
+
+    def __call__(
+        self,
+        inputs: mx.array | None = None,
+        inputs_embeds: mx.array | None = None,
+        mask: mx.array | None = None,
+        cache: list[BaseCache] | list[None] | None = None,
+    ):
+        if inputs_embeds is None:
+            h = self.embed_tokens(inputs)
+        else:
+            h = inputs_embeds
+
+        if cache is None:
+            cache = [None] * len(self.layers)
+
+        if mask is None:
+            mask = create_attention_mask(h, cache)
+
+        for layer, c in zip(self.layers, cache, strict=True):
+            h = layer(h, mask, c)
+
+        return self.norm(h)
+
+
+class LanguageModel(nn.Module):
+    def __init__(self, args: TextConfig):
+        super().__init__()
+        self.args = args
+        self.model = Qwen2Model(args)
+
+        if not args.tie_word_embeddings:
+            self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)
+
+    def __call__(
+        self,
+        inputs: mx.array | None = None,
+        inputs_embeds: mx.array | None = None,
+        mask: mx.array | None = None,
+        cache: list[BaseCache] | list[None] | None = None,
+    ):
+        if inputs is None and inputs_embeds is None:
+            raise ValueError("Either inputs or inputs_embeds must be provided")
+
+        out = self.model(
+            inputs,
+            mask=mask,
+            cache=cache,
+            inputs_embeds=inputs_embeds,
+        )
+
+        if self.args.tie_word_embeddings:
+            logits = self.model.embed_tokens.as_linear(out)
+        else:
+            logits = self.lm_head(out)
+
+        return logits
+
+    @property
+    def layers(self):
+        return self.model.layers
+
+    @property
+    def head_dim(self):
+        return self.args.hidden_size // self.args.num_attention_heads
+
+    @property
+    def n_kv_heads(self):
+        return self.args.num_key_value_heads
+
+
+---
+src/proxy_inference_engine/models/intern/vision.py
+---
+from typing import cast
+
+import mlx.core as mx
+import mlx.nn as nn
+from pydantic import BaseModel
+
+
+class VisionConfig(BaseModel):
+    depth: int = 32
+    hidden_size: int = 1280
+    intermediate_size: int = 3420
+    out_hidden_size: int = 1536
+    num_heads: int = 16
+    image_size: int = 384
+    patch_size: int = 14
+    vocab_size: int = 32000
+    mlp_ratio: float = 4.0
+    in_channels: int = 3
+    layer_norm_eps: float = 1e-6
+    spatial_patch_size: int = 14
+    spatial_merge_size: int = 2
+    tokens_per_second: int = 2
+    temporal_patch_size: int = 2
+    window_size: int = 112
+    fullatt_block_indexes: list[int]
+
+
+def check_array_shape(arr):
+    shape = arr.shape
+
+    # Check if the shape has 4 dimensions
+    if len(shape) not in [4, 5]:
+        return False
+
+    B, out_channels, kH, KW, t = shape
+
+    if t == 3:
+        return True
+
+    # Check if out_channels is the largest, and kH and KW are the same
+    if (out_channels >= kH) and (out_channels >= KW) and (kH == KW):
+        return True
+    else:
+        return False
+
+
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return mx.concatenate([-x2, x1], axis=-1)
+
+
+def apply_rotary_pos_emb_vision(tensor, freqs) -> mx.array:
+    orig_dtype = tensor.dtype
+
+    cos = mx.cos(freqs)
+    sin = mx.sin(freqs)
+
+    cos = mx.expand_dims(cos, axis=1)  # Equivalent to unsqueeze(1)
+    cos = mx.tile(cos, (1, 1, 2))  # Equivalent to repeat(1, 1, 2)
+    cos = mx.expand_dims(cos, axis=0)  # Equivalent to [None, ...]
+
+    sin = mx.expand_dims(sin, axis=1)  # Equivalent to unsqueeze(1)
+    sin = mx.tile(sin, (1, 1, 2))  # Equivalent to repeat(1, 1, 2)
+    sin = mx.expand_dims(sin, axis=0)  # Equivalent to [None, ...]
+
+    output = (tensor * cos) + (rotate_half(tensor) * sin)
+    return output.astype(orig_dtype)
+
+
+class VisionRotaryEmbedding(nn.Module):
+    def __init__(self, dim: int, theta: float = 10000.0) -> None:
+        super().__init__()
+        self.dim = dim
+        self.theta = theta
+
+    def __call__(self, seqlen: mx.array) -> mx.array:
+        inv_freq = 1.0 / (
+            self.theta ** (mx.arange(0, self.dim, 2, dtype=mx.float32) / self.dim)
+        )
+        seq = mx.arange(seqlen, dtype=inv_freq.dtype)
+        freqs = mx.outer(seq, inv_freq)
+        return freqs
+
+
+class PatchEmbed(nn.Module):
+    def __init__(
+        self,
+        patch_size: int = 14,
+        temporal_patch_size: int = 2,
+        in_channels: int = 3,
+        hidden_size: int = 1152,
+    ) -> None:
+        super().__init__()
+        self.patch_size = patch_size
+        self.temporal_patch_size = temporal_patch_size
+        self.in_channels = in_channels
+        self.hidden_size = hidden_size
+
+        kernel_size = [temporal_patch_size, patch_size, patch_size]
+        self.proj = nn.Conv3d(
+            in_channels,
+            hidden_size,
+            kernel_size=tuple(kernel_size),
+            stride=tuple(kernel_size),
+            bias=False,
+        )
+
+    def __call__(self, hidden_states: mx.array) -> mx.array:
+        hidden_states = hidden_states.reshape(
+            -1,
+            self.in_channels,
+            self.temporal_patch_size,
+            self.patch_size,
+            self.patch_size,
+        ).moveaxis(1, 4)
+
+        hidden_states = self.proj(hidden_states)
+        hidden_states = hidden_states.reshape(-1, self.hidden_size)
+        return hidden_states
+
+
+class PatchMerger(nn.Module):
+    def __init__(self, dim: int, context_dim: int, spatial_merge_size: int = 2) -> None:
+        super().__init__()
+        self.hidden_size = context_dim * (spatial_merge_size**2)
+        self.ln_q = nn.RMSNorm(context_dim, eps=1e-6)
+        self.mlp = [
+            nn.Linear(self.hidden_size, self.hidden_size),
+            nn.GELU(),
+            nn.Linear(self.hidden_size, dim),
+        ]
+
+    def __call__(self, x: mx.array) -> mx.array:
+        x = self.ln_q(x).reshape(-1, self.hidden_size)
+        for layer in self.mlp:
+            x = layer(x)
+        return x
+
+
+class Attention(nn.Module):
+    def __init__(self, dim: int, num_heads: int = 16) -> None:
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = head_dim = dim // num_heads
+        self.scale = head_dim**-0.5
+        self.qkv = nn.Linear(dim, dim * 3, bias=True)
+        self.proj = nn.Linear(dim, dim)
+
+    def __call__(
+        self,
+        x: mx.array,
+        cu_seqlens: mx.array,
+        rotary_pos_emb: mx.array | None = None,
+    ) -> mx.array:
+        seq_length = x.shape[0]
+        qkv = (
+            self.qkv(x).reshape(seq_length, 3, self.num_heads, -1).transpose(1, 0, 2, 3)
+        )
+        q, k, v = mx.split(qkv, 3)
+
+        q = apply_rotary_pos_emb_vision(mx.expand_dims(q, 0), rotary_pos_emb)[0]
+        k = apply_rotary_pos_emb_vision(mx.expand_dims(k, 0), rotary_pos_emb)[0]
+        attention_mask = mx.full(
+            (1, seq_length, seq_length), mx.finfo(q.dtype).min, dtype=q.dtype
+        )
+
+        for i in range(1, len(cu_seqlens)):
+            start = int(cu_seqlens[i - 1])
+            end = int(cu_seqlens[i])
+            attention_mask[..., start:end, start:end] = 0
+
+        q = q.transpose(0, 2, 1, 3)
+        k = k.transpose(0, 2, 1, 3)
+        v = v.transpose(0, 2, 1, 3)
+
+        output = mx.fast.scaled_dot_product_attention(
+            q, k, v, scale=self.scale, mask=attention_mask
+        )
+        output = output.transpose(0, 2, 1, 3)
+        output = output.reshape(seq_length, -1)
+        return self.proj(output)
+
+
+class MLP(nn.Module):
+    def __init__(self, dim, hidden_dim):
+        super().__init__()
+        self.gate_proj = nn.Linear(dim, hidden_dim)
+        self.up_proj = nn.Linear(dim, hidden_dim)
+        self.down_proj = nn.Linear(hidden_dim, dim)
+
+    def __call__(self, x: mx.array) -> mx.array:
+        return self.down_proj(nn.silu(self.gate_proj(x)) * self.up_proj(x))
+
+
+class Qwen2VLVisionBlock(nn.Module):
+    def __init__(self, config: VisionConfig) -> None:
+        super().__init__()
+        self.norm1 = nn.RMSNorm(config.hidden_size, eps=1e-6)
+        self.norm2 = nn.RMSNorm(config.hidden_size, eps=1e-6)
+
+        self.attn = Attention(dim=config.hidden_size, num_heads=config.num_heads)
+        self.mlp = MLP(dim=config.hidden_size, hidden_dim=config.intermediate_size)
+
+    def __call__(self, hidden_states, cu_seqlens, rotary_pos_emb) -> mx.array:
+        hidden_states = hidden_states + self.attn(
+            self.norm1(hidden_states),
+            cu_seqlens=cu_seqlens,
+            rotary_pos_emb=rotary_pos_emb,
+        )
+        hidden_states = hidden_states + self.mlp(self.norm2(hidden_states))
+        return hidden_states
+
+
+class VisionModel(nn.Module):
+    def __init__(self, config: VisionConfig) -> None:
+        super().__init__()
+        self.config = config
+        self.spatial_merge_size = config.spatial_merge_size
+
+        self.patch_embed = PatchEmbed(
+            patch_size=config.patch_size,
+            temporal_patch_size=config.temporal_patch_size,
+            in_channels=config.in_channels,
+            hidden_size=config.hidden_size,
+        )
+
+        self.window_size = config.window_size
+        self.patch_size = config.patch_size
+        self.spatial_merge_unit = self.spatial_merge_size * self.spatial_merge_size
+        self.fullatt_block_indexes = config.fullatt_block_indexes
+        head_dim = config.hidden_size // config.num_heads
+        self.rotary_pos_emb = VisionRotaryEmbedding(head_dim // 2)
+
+        self.blocks = [Qwen2VLVisionBlock(config) for _ in range(config.depth)]
+        self.merger = PatchMerger(
+            dim=config.out_hidden_size, context_dim=config.hidden_size
+        )
+
+    def rot_pos_emb(self, grid_thw):
+        pos_ids = []
+
+        for t, h, w in grid_thw.tolist():
+            hpos_ids = mx.expand_dims(mx.arange(h), 1)
+            hpos_ids = mx.repeat(hpos_ids, w, axis=1)
+            hpos_ids = hpos_ids.reshape(
+                h // self.spatial_merge_size,
+                self.spatial_merge_size,
+                w // self.spatial_merge_size,
+                self.spatial_merge_size,
+            )
+            hpos_ids = mx.transpose(hpos_ids, (0, 2, 1, 3))
+            hpos_ids = hpos_ids.flatten()
+
+            wpos_ids = mx.expand_dims(mx.arange(w), 0)
+            wpos_ids = mx.repeat(wpos_ids, h, axis=0)
+            wpos_ids = wpos_ids.reshape(
+                h // self.spatial_merge_size,
+                self.spatial_merge_size,
+                w // self.spatial_merge_size,
+                self.spatial_merge_size,
+            )
+            wpos_ids = mx.transpose(wpos_ids, (0, 2, 1, 3))
+            wpos_ids = wpos_ids.flatten()
+
+            stacked_pos_ids = mx.stack([hpos_ids, wpos_ids], axis=-1)
+            pos_ids.append(mx.tile(stacked_pos_ids, (t, 1)))
+
+        pos_ids = mx.concatenate(pos_ids, axis=0)
+        max_grid_size = mx.max(grid_thw[:, 1:])
+        rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)
+        rotary_pos_emb = rotary_pos_emb_full[pos_ids]
+
+        return rotary_pos_emb.reshape(pos_ids.shape[0], -1)
+
+    def get_window_index(self, grid_thw) -> tuple[mx.array, mx.array]:
+        window_index = []
+        cu_window_seqlens = mx.array([0])
+        window_index_id = 0
+        vit_merger_window_size = (
+            self.window_size // self.spatial_merge_size // self.patch_size
+        )
+
+        for grid_t, grid_h, grid_w in grid_thw.tolist():
+            llm_grid_h = grid_h // self.spatial_merge_size
+            llm_grid_w = grid_w // self.spatial_merge_size
+
+            index = mx.arange(grid_t * llm_grid_h * llm_grid_w).reshape(
+                grid_t, llm_grid_h, llm_grid_w
+            )
+
+            pad_h = vit_merger_window_size - llm_grid_h % vit_merger_window_size
+            pad_w = vit_merger_window_size - llm_grid_w % vit_merger_window_size
+            num_windows_h = (llm_grid_h + pad_h) // vit_merger_window_size
+            num_windows_w = (llm_grid_w + pad_w) // vit_merger_window_size
+
+            index_padded = mx.pad(
+                index,
+                ((0, 0), (0, pad_h), (0, pad_w)),
+                mode="constant",
+                constant_values=-100,
+            )
+
+            index_padded = index_padded.reshape(
+                grid_t,
+                num_windows_h,
+                vit_merger_window_size,
+                num_windows_w,
+                vit_merger_window_size,
+            )
+
+            # Replace permute with np.transpose
+            index_padded = mx.transpose(index_padded, (0, 1, 3, 2, 4)).reshape(
+                grid_t,
+                num_windows_h * num_windows_w,
+                vit_merger_window_size,
+                vit_merger_window_size,
+            )
+
+            # Identify valid indices (not padding)
+            valid_mask = index_padded != -100
+            assert isinstance(valid_mask, mx.array)
+            seqlens = mx.sum(valid_mask.astype(mx.int32), axis=(2, 3)).reshape(-1)
+            index_padded_flat = index_padded.reshape(-1)
+
+            # Use argsort to find the indices of valid elements
+            valid_mask_flat = valid_mask.reshape(-1)
+            num_valid = mx.sum(valid_mask_flat.astype(mx.int32))
+            # Cast item() result for comparison
+            num_valid_val = cast(int, num_valid.item())
+            if num_valid_val > 0:
+                sorted_indices = mx.argsort(valid_mask_flat.astype(mx.int32))
+                # Cast item() result for slicing calculation
+                valid_indices = sorted_indices[
+                    int(sorted_indices.size - num_valid_val) :
+                ]
+                index_new = index_padded_flat[valid_indices]
+            else:
+                # Handle case with no valid indices in a window (should be rare)
+                index_new = mx.array([], dtype=index_padded_flat.dtype)
+
+            window_index.append(index_new + window_index_id)
+
+            # Calculate cumulative sequence lengths for windows
+            cu_seqlens_tmp = (
+                mx.cumsum(seqlens, axis=0) * self.spatial_merge_unit
+                + cu_window_seqlens[-1]
+            )
+            cu_window_seqlens = mx.concatenate([cu_window_seqlens, cu_seqlens_tmp])
+            window_index_id += int(grid_t * llm_grid_h * llm_grid_w)
+
+        window_index = mx.concatenate(window_index, axis=0)
+        cu_window_seqlens = mx.array(cu_window_seqlens)
+
+        return window_index, cu_window_seqlens
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        grid_thw: mx.array | None = None,
+        output_hidden_states: bool | None = None,
+    ) -> mx.array:
+        # Ensure grid_thw is provided, as it's necessary
+        if grid_thw is None:
+            raise ValueError(
+                "grid_thw must be provided for the VisionModel forward pass."
+            )
+
+        hidden_states = self.patch_embed(hidden_states)
+        rotary_pos_emb = self.rot_pos_emb(grid_thw)
+        window_index, cu_window_seqlens = self.get_window_index(grid_thw)
+
+        # Get indices of first occurrence of each unique value
+        seen = set()
+        idx = []
+        for i, x in enumerate(cu_window_seqlens):
+            if x not in seen:
+                seen.add(x)
+                idx.append(i)
+
+        idx = mx.array(idx, dtype=mx.int32)
+        cu_window_seqlens = cu_window_seqlens[idx]
+
+        seq_len, _ = hidden_states.shape
+        hidden_states = hidden_states.reshape(
+            seq_len // self.spatial_merge_unit, self.spatial_merge_unit, -1
+        )
+        hidden_states = hidden_states[window_index, :, :]
+        hidden_states = hidden_states.reshape(seq_len, -1)
+        rotary_pos_emb = rotary_pos_emb.reshape(
+            seq_len // self.spatial_merge_unit, self.spatial_merge_unit, -1
+        )
+        rotary_pos_emb = rotary_pos_emb[window_index, :, :]
+        rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
+
+        # Assuming grid_thw has shape (batch_size, 3)
+        batch_size = grid_thw.shape[0]
+
+        # Calculate cu_seqlens for each item in the batch
+        cu_seqlens_list = []
+        for i in range(batch_size):
+            # Use cast(int, item()) for integer dimensions/repeats
+            grid_t_i = cast(int, grid_thw[i, 0].item())
+            grid_h_i = cast(int, grid_thw[i, 1].item())
+            grid_w_i = cast(int, grid_thw[i, 2].item())
+            # Pass an array to mx.repeat, not a Python int
+            seq_len_arr = mx.array([grid_h_i * grid_w_i])
+            cu_seqlens_list.append(mx.repeat(seq_len_arr, grid_t_i))
+
+        # Concatenate the cu_seqlens for all items in the batch
+        cu_seqlens = mx.concatenate(cu_seqlens_list)
+
+        cu_seqlens = mx.cumsum(cu_seqlens.astype(mx.int32), axis=0)
+        cu_seqlens = mx.pad(cu_seqlens, (1, 0), mode="constant", constant_values=0)
+
+        # Initialize encoder_states correctly based on output_hidden_states
+        encoder_states = ()  # Use tuple for potentially empty states
+        if output_hidden_states:
+            encoder_states = (hidden_states,)
+
+        for layer_num, blk in enumerate(self.blocks):
+            if layer_num in self.fullatt_block_indexes:
+                cu_seqlens_now = cu_seqlens
+            else:
+                cu_seqlens_now = cu_window_seqlens
+
+            hidden_states = blk(
+                hidden_states, cu_seqlens=cu_seqlens_now, rotary_pos_emb=rotary_pos_emb
+            )
+
+            if output_hidden_states:
+                # Ensure encoder_states is always a tuple
+                encoder_states = (*encoder_states, hidden_states)
+
+        hidden_states = self.merger(hidden_states)
+        reverse_indices = mx.argsort(window_index, axis=0)
+        hidden_states = hidden_states[reverse_indices, :]
+        return hidden_states
+
+    @staticmethod
+    def sanitize(weights: dict[str, mx.array]) -> dict[str, mx.array]:
+        sanitized_weights = {}
+        for k, v in weights.items():
+            if "position_ids" in k:
+                # Remove unused position_ids
+                continue
+            elif "patch_embed.proj.weight" in k:
+                # PyTorch conv2d weight tensors have shape:
+                #   [out_channels, in_channels, kH, KW]
+                # MLX conv2d expects the weight be of shape:
+                #   [out_channels, kH, KW, in_channels]
+                if check_array_shape(v):
+                    sanitized_weights[k] = v
+                else:
+                    sanitized_weights[k] = v.transpose(0, 2, 3, 4, 1)
+            else:
+                sanitized_weights[k] = v
+
+        return sanitized_weights
+
+
+---
+src/proxy_inference_engine/vision/__init__.py
+---
+
+
+---
+src/proxy_inference_engine/vision/utils.py
+---
+from abc import abstractmethod
+from io import BytesIO
+from pathlib import Path
+
+import mlx.core as mx
+import requests
+from PIL import Image, ImageOps
+from PIL.Image import Resampling as PILResampling
+from transformers.image_processing_utils import BaseImageProcessor as ImageProcessor
+from transformers.image_processing_utils import get_size_dict
+from transformers.image_utils import ChannelDimension
+
+
+class BaseImageProcessor(ImageProcessor):
+    def __init__(
+        self,
+        image_mean=(0.5, 0.5, 0.5),
+        image_std=(0.5, 0.5, 0.5),
+        size=(384, 384),
+        crop_size: dict[str, int] | None = None,
+        resample=PILResampling.BICUBIC,
+        rescale_factor=1 / 255,
+        data_format=ChannelDimension.FIRST,
+    ):
+        if not crop_size:
+            crop_size = {"height": 448, "width": 448}
+        crop_size = get_size_dict(
+            crop_size,
+            default_to_square=True,
+            param_name="crop_size",
+        )
+
+        self.image_mean = image_mean
+        self.image_std = image_std
+        self.size = size
+        self.resample = resample
+        self.rescale_factor = rescale_factor
+        self.data_format = data_format
+        self.crop_size = crop_size
+
+    @abstractmethod
+    def preprocess(self, images: list[Image.Image]) -> list[mx.array]:
+        pass
+
+def load_image(image_source: str | Path | BytesIO, timeout: int = 10) -> Image.Image:
+    """
+    Helper function to load an image from either a URL or file.
+    """
+    if isinstance(image_source, BytesIO) or Path(image_source).is_file():
+        # for base64 encoded images
+        try:
+            image = Image.open(image_source)
+        except OSError as e:
+            raise ValueError(
+                f"Failed to load image from {image_source} with error: {e}"
+            ) from e
+    elif isinstance(image_source, str) and image_source.startswith(
+        ("http://", "https://")
+    ):
+        try:
+            response = requests.get(image_source, stream=True, timeout=timeout)
+            response.raise_for_status()
+            image = Image.open(response.raw)
+        except Exception as e:
+            raise ValueError(
+                f"Failed to load image from URL: {image_source} with error {e}"
+            ) from e
+    else:
+        raise ValueError(
+            f"The image {image_source} must be a valid URL or existing file."
+        )
+
+    image = ImageOps.exif_transpose(image)
+    image = image.convert("RGB")
+    return image
+
+
+def resize_image(img: Image.Image, max_size: tuple[int, int]) -> Image.Image:
+    ratio = min(max_size[0] / img.width, max_size[1] / img.height)
+    new_size = (int(img.width * ratio), int(img.height * ratio))
+    return img.resize(new_size)
+
+
+def process_image(
+    img: Image.Image | str,
+    resize_shape: tuple[int, int] | None,
+) -> Image.Image:
+    if isinstance(img, str):
+        img = load_image(img)
+
+    if resize_shape is not None:
+        img = resize_image(img, resize_shape)
+
+    return img
+
+
+---
+src/proxy_inference_engine/samplers/__init__.py
+---
+from collections.abc import Callable
+
+import mlx.core as mx
+
+from proxy_inference_engine.samplers.categorical import categorical_sampling
+from proxy_inference_engine.samplers.min_p import min_p_sampling
+from proxy_inference_engine.samplers.top_k import top_k_sampling
+from proxy_inference_engine.samplers.top_p import top_p_sampling
+
+
+def make_sampler(
+    temp: float = 0.0,
+    top_p: float = 0.0,
+    min_p: float = 0.0,
+    min_tokens_to_keep: int = 1,
+    top_k: int = -1,
+) -> Callable[[mx.array], mx.array]:
+    """
+    Make a sampler function for use with ``generate_step``.
+
+    Args:
+        temp (float): The temperature for sampling, if 0 the argmax is used.
+          Default: ``0``.
+        top_p (float, optional): Nulceus sampling, higher means model considers
+          more less likely words.
+        min_p (float, optional): The minimum value (scaled by the top token's
+          probability) that a token probability must have to be considered.
+        min_tokens_to_keep (int, optional): Minimum number of tokens that cannot
+          be filtered by min_p sampling.
+        top_k (int, optional): The top k tokens ranked by probability to constrain
+          the sampling to.
+
+    Returns:
+        Callable[mx.array, mx.array]:
+            A sampler which takes log-probabilities and returns tokens.
+    """
+    if temp == 0:
+        return lambda x: mx.argmax(x, axis=-1)
+    elif top_p > 0 and top_p < 1.0:
+        return lambda x: top_p_sampling(x, top_p, temp)
+    elif min_p != 0.0:
+        return lambda x: min_p_sampling(x, min_p, min_tokens_to_keep, temp)
+    elif top_k > 0:
+        return lambda x: top_k_sampling(x, top_k, temp)
+    else:
+        return lambda x: categorical_sampling(x, temp)
+
+
+---
+src/proxy_inference_engine/samplers/categorical.py
+---
+from functools import partial
+
+import mlx.core as mx
+
+
+@partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)
+def categorical_sampling(logits, temp):
+    return mx.random.categorical(logits * (1 / temp))
+
+---
+src/proxy_inference_engine/samplers/dry.py
+---
+
+
+---
+src/proxy_inference_engine/samplers/min_p.py
+---
+import math
+from functools import partial
+
+import mlx.core as mx
+
+
+@partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)
+def min_p_sampling(
+    logprobs: mx.array,
+    min_p: float,
+    min_tokens_to_keep: int = 1,
+    temperature=1.0,
+) -> mx.array:
+    """
+    Apply min-p sampling to the logprobs.
+
+    Min-p keeps all tokens that are above a minimum probability, scaled by the
+    probability of the most likely token. As a result, the filter is more
+    aggressive given a very high-probability token.
+
+    Args:
+        logprobs: A vector of log probabilities.
+        min_p (float): Minimum token probability. Typical values are in the
+            0.01-0.2 range, comparably selective as setting `top_p` in the
+            0.99-0.8 range.
+        min_tokens_to_keep (int, optional): Minimum number of tokens that cannot
+            be filtered. Default: ``1``.
+
+    """
+    if not (0 <= min_p <= 1.0):
+        raise ValueError(
+            f"`min_p` has to be a float in the [0, 1] interval, but is {min_p}"
+        )
+    if not isinstance(min_tokens_to_keep, int) or (min_tokens_to_keep < 1):
+        raise ValueError(
+            f"`min_tokens_to_keep` has to be a positive integer, but is {min_tokens_to_keep}"
+        )
+
+    logprobs = logprobs * (1 / temperature)
+
+    # Indices sorted in decreasing order
+    sorted_indices = mx.argsort(-logprobs, axis=-1)
+    sorted_logprobs = mx.take_along_axis(logprobs, sorted_indices, axis=-1)
+
+    # Top probability
+    top_logprobs = sorted_logprobs[:, 0:1]
+
+    # Calculate the min_p threshold
+    scaled_min_p = top_logprobs + math.log(min_p)
+
+    # Mask tokens that have a probability less than the scaled min_p
+    tokens_to_remove = sorted_logprobs < scaled_min_p
+    tokens_to_remove[..., :min_tokens_to_keep] = False
+
+    # Create pool of tokens with probability less than scaled min_p
+    selected_logprobs = mx.where(tokens_to_remove, -float("inf"), sorted_logprobs)
+
+    # Return sampled tokens
+    sorted_tokens = mx.random.categorical(selected_logprobs, axis=-1)[:, None]
+    return mx.take_along_axis(sorted_indices, sorted_tokens, axis=-1).squeeze(1)
+
+
+---
+src/proxy_inference_engine/samplers/top_k.py
+---
+from functools import partial
+
+import mlx.core as mx
+
+
+@partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)
+def top_k_sampling(
+    logprobs: mx.array,
+    top_k: int,
+    temperature=1.0,
+) -> mx.array:
+    """
+    Sample from only the top K tokens ranked by probability.
+
+    Args:
+        logprobs: A vector of log probabilities.
+        top_k (int): Top k tokens to sample from.
+    """
+    vocab_size = logprobs.shape[-1]
+    if not isinstance(top_k, int) or not (0 < top_k < vocab_size):
+        raise ValueError(
+            f"`top_k` has to be an integer in the (0, {vocab_size}] interval,"
+            f" but is {top_k}."
+        )
+    logprobs = logprobs * (1 / temperature)
+    mask_idx = mx.argpartition(-logprobs, kth=top_k - 1, axis=-1)[..., top_k:]
+    masked_logprobs = mx.put_along_axis(
+        logprobs, mask_idx, mx.array(-float("inf"), logprobs.dtype), axis=-1
+    )
+    return mx.random.categorical(masked_logprobs, axis=-1)
+
+---
+src/proxy_inference_engine/samplers/top_p.py
+---
+from functools import partial
+
+import mlx.core as mx
+
+
+@partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)
+def top_p_sampling(logits: mx.array, top_p: float, temperature: float) -> mx.array:
+    """
+    Apply top-p (nucleus) sampling to logits.
+
+    Args:
+        logits: The logits from the model's output.
+        top_p: The cumulative probability threshold for top-p filtering.
+        temperature: Temperature parameter for softmax distribution reshaping.
+    Returns:
+        token selected based on the top-p criterion.
+    """
+    probs = mx.softmax(logits * (1 / temperature), axis=-1)
+
+    # sort probs in ascending order
+    sorted_indices = mx.argsort(probs, axis=-1)
+    sorted_probs = mx.take_along_axis(probs, sorted_indices, axis=-1)
+
+    cumulative_probs = mx.cumsum(sorted_probs, axis=-1)
+
+    # select tokens with cumulative probs below threshold
+    top_probs = mx.where(
+        cumulative_probs > 1 - top_p,
+        sorted_probs,
+        0,
+    )
+
+    sorted_tokens = mx.random.categorical(mx.log(top_probs), axis=-1)[:, None]
+    return mx.take_along_axis(sorted_indices, sorted_tokens, axis=-1).squeeze(1)
+
+
+---
+src/proxy_inference_engine/samplers/xtc.py
+---
+
+
+---
+src/proxy_inference_engine/engine/__init__.py
+---
+from proxy_inference_engine.engine.inference_engine import InferenceEngine
+
+__all__ = ["InferenceEngine"]
+
+
+---
+src/proxy_inference_engine/engine/inference_engine.py
+---
+import logging
+from collections.abc import Callable, Iterator
+from typing import Any
+
+import mlx.core as mx
+from pse.structuring_engine import StructuringEngine
+
+from proxy_inference_engine.cache import PromptCache
+from proxy_inference_engine.interaction.interaction import Interaction
+from proxy_inference_engine.logits_processors import repetition_penalty_logits_processor
+from proxy_inference_engine.models import load
+from proxy_inference_engine.samplers import make_sampler
+from proxy_inference_engine.tokenizer import Tokenizer
+
+logger = logging.getLogger(__name__)
+
+
+class InferenceEngine:
+    """
+    A class for performing inference with a LLM.
+    """
+
+    def __init__(self, model_path: str):
+        llm = load(model_path)
+        self.model, self.tokenizer_config = llm.model, llm.tokenizer_config
+        self.tokenizer = Tokenizer(llm.hf_tokenizer, self.tokenizer_config)
+        self.prompt_cache = PromptCache()
+        self.structuring_engine = StructuringEngine(llm.hf_tokenizer, multi_token_sampling=True)
+        logger.info(f"Inference Engine initialized with model from {model_path}")
+
+    def configure(self, **kwargs) -> None:
+        """
+        Configure the inference engine.
+        """
+        pass
+
+
+    async def __call__(
+        self,
+        prompt: list[Interaction],
+        **inference_kwargs,
+    ) -> tuple[str, dict[str, Any]]:
+        """
+        Generate a completion for the given prompt.
+
+        Args:
+            prompt (list[Interaction]): The input prompt for completion.
+            **inference_kwargs: Additional keyword arguments to use for inference.
+        """
+        tokenizer_config = {
+            "prompt": prompt,
+            **inference_kwargs,
+            **self.tokenizer.control_tokens.model_dump(),
+        }
+        encoded_prompt = self.tokenizer.encode(**tokenizer_config)
+        prompt_length = encoded_prompt.size
+
+        self.prompt_cache.load_cached_prompt(encoded_prompt)
+        logger.info(f"PROMPT:\n{self.tokenizer.decode(encoded_prompt)}")
+        generated_ids_list, finish_reason = await self.generate(
+            encoded_prompt, **inference_kwargs
+        )
+        generated_text = self.tokenizer.decode(generated_ids_list)
+        return generated_text, {
+            "finish_reason": finish_reason,
+            "prompt_tokens": prompt_length,
+            "completion_tokens": len(generated_ids_list),
+            "total_tokens": prompt_length + len(generated_ids_list),
+        }
+
+    async def generate(
+        self,
+        prompt_ids: mx.array,
+        **inference_kwargs,
+    ) -> tuple[mx.array, str]:
+        """
+        Generate a completion for the given prompt.
+
+        Args:
+            prompt_token_ids (mx.array): The input prompt for completion.
+        """
+        sampler = self.make_sampler(**inference_kwargs)
+        logits_processors = self.make_logits_processors(**inference_kwargs)
+        max_completion_tokens = int(inference_kwargs.get("max_completion_tokens", -1))
+
+        result: list[int] = []
+        stop_reason: str = "finish"
+
+        for token_id, _ in self.generate_step(
+            prompt_ids,
+            sampler=sampler,
+            logits_processors=logits_processors,
+        ):
+            tokens = token_id.tolist()
+            assert isinstance(tokens, list)
+            for token_id in tokens:
+                if token_id in self.tokenizer.stop_tokens:
+                    stop_reason = "stop"
+                    break
+
+                result.append(token_id)
+
+            if self.structuring_engine.has_reached_accept_state:
+                break
+
+            if max_completion_tokens > 0 and len(result) >= max_completion_tokens:
+                stop_reason = "length"
+                break
+
+        return mx.array(result), stop_reason
+
+    def generate_step(
+        self,
+        prompt_ids: mx.array,
+        pixel_values: mx.array | None = None,
+        mask: mx.array | None = None,
+        sampler: Callable[[mx.array], mx.array] = (lambda x: mx.argmax(x, axis=-1)),
+        logits_processors: list[Callable[[mx.array, mx.array], mx.array]] | None = None,
+    ) -> Iterator[tuple[mx.array, mx.array]]:
+        """
+        Generates tokens autoregressively, yielding one token and its log probabilities per step.
+
+        Yields:
+            tuples of (next_token_id, log_probabilities).
+        """
+
+        def _inference(
+            current_input_ids: mx.array,
+        ) -> tuple[mx.array, mx.array]:
+            """Performs one forward pass, updates history, applies processors, and samples."""
+            model_kwargs: dict[str, Any] = {"cache": self.prompt_cache.cache}
+
+            # Only add optional parameters if they exist
+            if pixel_values is not None:
+                model_kwargs["pixel_values"] = pixel_values
+            if mask is not None:
+                model_kwargs["mask"] = mask
+
+            # Call model with appropriate arguments
+            logits = self.model(current_input_ids[None], **model_kwargs)
+            # Extract logits for the most recent token
+            last_token_logits = logits[:, -1, :]
+            self.prompt_cache.update(current_input_ids)
+
+            processed_logits = last_token_logits
+
+            # Apply any configured logits processors sequentially
+            current_token_history = self.prompt_cache.computed_ids
+            for processor in logits_processors or []:
+                processed_logits = processor(current_token_history, processed_logits)
+
+            # Calculate log probabilities (log-softmax normalization)
+            logprobs = processed_logits - mx.logsumexp(
+                processed_logits, axis=-1, keepdims=True
+            )
+            # Sample the next token ID using the provided sampler function
+            next_token_id = sampler(logprobs)
+            return next_token_id, logprobs.squeeze(0)
+
+        if len(self.prompt_cache.cache) == 0:
+            self.prompt_cache.create_kv_cache(self.model)
+
+        tokens_to_process = self.prompt_cache(prompt_ids)
+        next_token_id, current_logprobs = _inference(tokens_to_process)
+        mx.async_eval(next_token_id, current_logprobs)
+
+        step_count = 0
+        while True:
+            if step_count == 0:
+                # Synchronize computation for the first token
+                mx.eval(next_token_id)
+            else:
+                # Perform the next inference step
+                next_token_id, current_logprobs = _inference(next_token_id)
+                mx.async_eval(next_token_id, current_logprobs)
+
+            # Yield the token and its log probabilities.
+            yield next_token_id, current_logprobs
+
+            step_count += 1
+            # Periodically clear the MLX computation graph cache to prevent excessive memory growth.
+            if step_count % 256 == 0:
+                mx.clear_cache()
+
+    def make_sampler(self, **kwargs) -> Callable[[mx.array], mx.array]:
+        """
+        Return a sampler function.
+        If structured is True, use the structured sampler.
+        Otherwise, use the simple sampler.
+        """
+        temp = float(kwargs.get("temp", 1.0))
+        min_p = float(kwargs.get("min_p", 0.02))
+        min_tokens_to_keep = int(kwargs.get("min_tokens_to_keep", 1))
+        top_p = float(kwargs.get("top_p", 1.0))
+        top_k = int(kwargs.get("top_k", -1))
+        sampler = make_sampler(
+            temp=temp,
+            min_p=min_p,
+            min_tokens_to_keep=min_tokens_to_keep,
+            top_p=top_p,
+            top_k=top_k,
+        )
+        if kwargs.get("structured", False) or kwargs.get("json_schema", None):
+            return lambda x: self.structuring_engine.sample(x, sampler)
+        else:
+            return sampler
+
+    def make_logits_processors(
+        self, **kwargs
+    ) -> list[Callable[[mx.array, mx.array], mx.array]]:
+        """
+        Return a list of logits processor functions.
+        """
+        logits_processors = []
+        if kwargs.get("structured", False) or kwargs.get("json_schema", None):
+            logits_processors.append(self.structuring_engine.process_logits)
+
+        if kwargs.get("repetition_penalty", 1.0) != 1.0:
+            repetition_penalty = float(kwargs.get("repetition_penalty", 1.0))
+            context_size = int(kwargs.get("context_size", 60))
+            logits_processors.append(
+                repetition_penalty_logits_processor(repetition_penalty, context_size)
+            )
+
+        return logits_processors
+
+
+---
+src/proxy_inference_engine/interaction/__init__.py
+---
+from enum import Enum
+
+
+class Role(Enum):
+    """
+    Enumeration of possible roles for an interaction.
+    """
+
+    AGENT = "agent"
+    SYSTEM = "system"
+    TOOL = "tool"
+    USER = "user"
+
+class Type(Enum):
+    """
+    Enumeration of possible types for an interaction.
+    """
+
+    TEXT = "text"
+    IMAGE = "image"
+    FILE = "file"
+    AUDIO = "audio"
+    VIDEO = "video"
+    ACTION = "action"
+
+from proxy_inference_engine.interaction.content import Content  # noqa: E402
+from proxy_inference_engine.interaction.interaction import Interaction  # noqa: E402
+
+__all__ = ["Content", "Interaction"]
+
+
+---
+src/proxy_inference_engine/interaction/content.py
+---
+from __future__ import annotations
+
+from typing import Any
+
+from proxy_inference_engine.interaction import Type
+
+
+class Content:
+    """
+    Represents the content of an interaction.
+    """
+
+    def __init__(self, type: Type, content: Any):
+        self.type = type
+        self.content = content
+
+    def to_dict(self) -> dict:
+        """
+        Convert the content to a dictionary representation.
+        """
+        content_dict = {
+            "type": self.type.value,
+        }
+        match self.type:
+            case Type.TEXT:
+                content_dict["text"] = self.content
+            case Type.IMAGE:
+                content_dict["image_url"] = self.content
+            case Type.ACTION:
+                content_dict["action"] = self.content
+            case _:
+                content_dict["file_url"] = self.content
+
+        return content_dict
+
+    def __str__(self) -> str:
+        return self.content
+
+    @staticmethod
+    def text(content: str) -> Content:
+        return Content(Type.TEXT, content)
+
+
+---
+src/proxy_inference_engine/interaction/interaction.py
+---
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import datetime
+from typing import Any
+
+from proxy_inference_engine.interaction import Role
+from proxy_inference_engine.interaction.content import Content
+
+
+class Interaction:
+    """
+    Represents a single interaction.
+
+    Interactions are uniquely identified by an event_id and can be converted to
+    dictionaries for serialization.
+    """
+
+    def __init__(
+        self,
+        role: Role,
+        content: list[Content],
+        **kwargs,
+    ) -> None:
+        """
+        Initialize a new Interaction.
+
+        Args:
+            event_id: Unique identifier for this interaction (auto-generated if None)
+            name: Optional name or identifier for the creator of this interaction
+            role: The role of this interaction (SYSTEM, USER, ASSISTANT, or TOOL)
+            content: The primary content of the interaction (text, structured data, etc.)
+            **kwargs: Additional metadata attributes to store with this interaction
+                      Common metadata includes title, color, emoji for display styling
+        """
+        self.created_at = datetime.now()
+        self.event_id = str(uuid.uuid4())
+        self.role = role
+        self.content = content
+        self.metadata = kwargs
+
+    def to_dict(self) -> dict:
+        """
+        Convert this interaction to a dictionary representation.
+
+        This method serializes the interaction into a dictionary format
+        suitable for:
+        - Passing to language models as context
+        - Storing in memory/databases
+        - Converting to JSON for APIs
+
+        Returns:
+            A dictionary containing all relevant interaction data
+        """
+        # Initialize with core attributes
+        dict: dict[str, Any] = {
+            "event_id": self.event_id,
+            "role": self.role.value,
+        }
+
+        if self.content:
+            content = [str(content) for content in self.content]
+            dict["content"] = content[0] if len(content) == 1 else content
+
+        for key, value in self.metadata.items():
+            if value and hasattr(value, "to_dict"):
+                dict[key] = value.to_dict()
+            else:
+                dict[key] = value
+
+        return dict
+
+    def __str__(self) -> str:
+        """Convert to a JSON string representation for debugging and logging."""
+        return json.dumps(self.to_dict(), indent=2)
+
+    def __repr__(self) -> str:
+        """Return string representation for REPL and debugging."""
+        return self.__str__()
+
+    def __eq__(self, other):
+        """
+        Check equality by comparing event_ids.
+
+        Two interactions are considered equal if they have the same event_id,
+        regardless of any other differences in their content or metadata.
+        """
+        if not isinstance(other, Interaction):
+            return False
+        return self.event_id == other.event_id
+
+    def __hash__(self):
+        """Create a hash based on event_id for use in sets and dictionaries."""
+        return hash(self.event_id)
+
+    def __getattribute__(self, name: str) -> Any:
+        """
+        Enhanced attribute access that transparently exposes metadata attributes.
+
+        This magic method allows metadata attributes to be accessed directly as if they
+        were instance attributes. For example, if an Interaction has metadata["title"],
+        you can access it using interaction.title.
+
+        The lookup order is:
+        1. Look for actual attributes on the instance
+        2. If not found, check if it exists in metadata
+        3. If not in metadata, return None
+
+        This creates a more convenient API for accessing metadata fields.
+        """
+        try:
+            # First try to get the actual attribute
+            return object.__getattribute__(self, name)
+        except AttributeError:
+            # If not found, check if it's in metadata
+            metadata = object.__getattribute__(self, "metadata")
+            if name in metadata:
+                return metadata[name]
+            return None
+
+    @staticmethod
+    def simple(role: Role, content: str) -> Interaction:
+        return Interaction(
+            role,
+            [Content.text(content)],
+        )
+
+
+---
