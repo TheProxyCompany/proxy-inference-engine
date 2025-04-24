@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 from typing import Any
+
 from proxy_inference_engine.interaction import Type
+
 
 class Content:
     """
@@ -28,3 +32,7 @@ class Content:
                 content_dict["file_url"] = self.content
 
         return content_dict
+
+    @staticmethod
+    def text(content: str) -> Content:
+        return Content(Type.TEXT, content)

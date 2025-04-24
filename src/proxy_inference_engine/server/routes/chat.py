@@ -1,65 +1,133 @@
 import logging
+
 from fastapi import APIRouter, HTTPException, status
 
+from proxy_inference_engine.engine import InferenceEngine
+from proxy_inference_engine.interaction import (
+    Interaction,
+    Role,
+)
+from proxy_inference_engine.server.exceptions import InferenceError
 from proxy_inference_engine.server.models.chat import (
+    CompletionChoice,
     CompletionRequest,
     CompletionResponse,
     CompletionUsage,
 )
-from proxy_inference_engine.server.exceptions import InferenceError
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+chat_router = APIRouter()
 
-
-@router.post(
+@chat_router.post(
     "/completions",
     response_model=CompletionResponse,
-    summary="Create a legacy text completion",
-    tags=["Legacy Completions"],
+    summary="Create a text completion",
+    tags=["Completions"],
 )
 async def handle_completion_request(
     request: CompletionRequest,
-    # service:
+    engine: InferenceEngine,
 ) -> CompletionResponse:
     """
-    Handles requests to the `/v1/chat/completions` endpoint.
+    Handles requests to the `/completions` endpoint.
 
     This endpoint uses the OpenAI v1 chat completions API.
     """
     logger.info(f"Handling completion request for model: {request.model}")
+
+    if request.stream:
+        logger.warning("Streaming requested but not supported.")
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Streaming is not supported in this version.",
+        )
+    if request.n > 1:
+        logger.warning("Request parameter 'n' > 1 is not supported, using n=1.")
+        # If best_of is also set, log a warning or raise error based on validation
+        if request.best_of is not None and request.best_of > 1:
+            logger.warning(
+                "Request parameters 'n' > 1 and 'best_of' > 1 are not supported, using n=1 and ignoring best_of."
+            )
+
+    input_interactions: list[Interaction]
+    if isinstance(request.prompt, str):
+        input_interactions = [
+            Interaction.simple(
+                role=Role.USER,
+                content=request.prompt,
+            )
+        ]
+    elif isinstance(request.prompt, list) and len(request.prompt) > 0:
+        logger.warning(
+            "Batch prompt input received, using only the first prompt in this version."
+        )
+        input_interactions = [
+            Interaction.simple(
+                role=Role.USER,
+                content=request.prompt[0],
+            )
+        ]
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid prompt format. Expecting string or list of strings.",
+        )
+
+    inference_kwargs = {
+        "max_tokens": request.max_tokens,
+        "temperature": request.temperature,
+        "top_p": request.top_p,
+        "top_k": request.top_k,
+        "min_p": request.min_p,
+    }
+
     try:
-        # response = await service.create_completion(request)
-        # return response
-        return CompletionResponse(
-            id="cmpl-123",
-            object="text_completion",
-            created=123,
-            model="gpt-3.5-turbo",
-            choices=[],
-            usage=CompletionUsage(
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
-            ),
-            system_fingerprint="",
+        generated_text, metadata = await engine(
+            input_interactions,
+            **inference_kwargs,
         )
     except InferenceError as e:
         logger.error(f"Inference error processing request: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Inference failed: {e}",
-        )
+        ) from e
     except NotImplementedError as e:
         logger.error(f"Feature not implemented: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=str(e),
-        )
+        ) from e
     except Exception as e:
         logger.exception("An unexpected error occurred", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred during completion.",
         ) from e
+
+    finish_reason = metadata.get("finish_reason", "unknown")
+    prompt_tokens = metadata.get("prompt_tokens", 0)
+    completion_tokens = metadata.get("completion_tokens", 0)
+    total_tokens = metadata.get("total_tokens", 0)
+
+    choice = CompletionChoice(
+        index=0,
+        text=generated_text,
+        logprobs=None,
+        finish_reason=finish_reason,
+    )
+
+    usage = CompletionUsage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+    )
+
+    response = CompletionResponse(
+        model=request.model,
+        choices=[choice],
+        usage=usage,
+    )
+    logger.info(f"Completion request successful. ID: {response.id}")
+    return response

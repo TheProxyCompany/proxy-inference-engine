@@ -42,6 +42,7 @@ dev = [
     "pytest",
     "build",
     "twine",
+    "ruff",
 ]
 
 [project.urls]
@@ -60,6 +61,18 @@ target-version = ["py312"]
 [tool.isort]
 profile = "black"
 line_length = 100
+
+
+[tool.ruff.lint]
+extend-select = [
+    "B",    # flake8-bugbear
+    "I",    # isort
+    "PGH",  # pygrep-hooks
+    "RUF",  # Ruff-specific
+    "UP",   # pyupgrade
+    "SLF",  # string-literal-format
+    "F8",   # flake8-comprehensions
+]
 
 [tool.mypy]
 python_version = "3.12"

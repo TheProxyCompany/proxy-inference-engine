@@ -8,6 +8,7 @@ from typing import Any
 from proxy_inference_engine.interaction import Role
 from proxy_inference_engine.interaction.content import Content
 
+
 class Interaction:
     """
     Represents a single interaction.
@@ -114,3 +115,10 @@ class Interaction:
             if name in metadata:
                 return metadata[name]
             return None
+
+    @staticmethod
+    def simple(role: Role, content: str) -> Interaction:
+        return Interaction(
+            role,
+            [Content.text(content)],
+        )

@@ -1,18 +1,17 @@
 import logging
 import logging.config
+
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
-# from proxy_inference_engine.engine import InferenceEngine
-
+from proxy_inference_engine.engine import InferenceEngine
 from proxy_inference_engine.server.config import load_settings
 from proxy_inference_engine.server.exceptions import InferenceError
-from proxy_inference_engine.server.routes.chat import (
-    router as completions_router,
-)
+from proxy_inference_engine.server.routes.chat import chat_router
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -23,15 +22,12 @@ def create_app() -> FastAPI:
     settings = load_settings()
     logger.info(f"Settings loaded. Model path (MVP): {settings.MODEL_PATH_MVP}")
 
-    # --- MVP: Load Single Engine Directly ---
-    # In the future, this will be replaced by EngineManager
     try:
         logger.info(f"Loading InferenceEngine from: {settings.MODEL_PATH_MVP}")
-        # pie_engine = InferenceEngine(settings.MODEL_PATH_MVP)
+        inference_engine = InferenceEngine(settings.MODEL_PATH_MVP)
         logger.info("InferenceEngine loaded successfully.")
     except Exception as e:
         logger.exception(f"FATAL: Failed to load InferenceEngine: {e}", exc_info=True)
-        # Depending on desired behavior, you might exit or continue without the engine
         raise RuntimeError(f"Could not initialize InferenceEngine: {e}") from e
 
     # --- Instantiate Services ---
@@ -41,10 +37,9 @@ def create_app() -> FastAPI:
     logger.info("Creating FastAPI application instance...")
     app = FastAPI(
         title="Proxy Inference Engine",
-        description="A proxy server for various inference engines.",
+        description="A server for the Proxy Inference Engine.",
         version="0.1.0",
     )
-
 
     # --- Exception Handlers ---
     @app.exception_handler(InferenceError)
@@ -59,14 +54,8 @@ def create_app() -> FastAPI:
     logger.info("Exception handlers registered.")
 
     # --- Include Routers ---
-    app.include_router(completions_router, prefix="/v1", tags=["Legacy Completions"])
+    app.include_router(chat_router, prefix="/v1/chat", tags=["Chat"])
     logger.info("Routers included.")
-
-    # --- Health Check Endpoint (Optional but Recommended) ---
-    @app.get("/health", status_code=status.HTTP_200_OK, tags=["Health"])
-    async def health_check():
-        # Basic check; could be expanded to check engine status, etc.
-        return {"status": "ok"}
 
     logger.info("Application setup complete.")
     return app

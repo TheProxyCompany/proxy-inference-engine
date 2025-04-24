@@ -7,17 +7,15 @@ from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
-
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
+from proxy_inference_engine.interaction import Interaction
 from proxy_inference_engine.tokenizer.control_tokens import (
     ControlTokens,
     get_control_tokens,
 )
-from proxy_inference_engine.interaction import Interaction
-
 
 logger = logging.getLogger(__name__)
 
