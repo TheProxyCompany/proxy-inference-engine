@@ -54,11 +54,14 @@ class Interaction:
             A dictionary containing all relevant interaction data
         """
         # Initialize with core attributes
-        dict = {
+        dict: dict[str, Any] = {
             "event_id": self.event_id,
             "role": self.role.value,
-            "content": [str(content) for content in self.content],
         }
+
+        if self.content:
+            content = [str(content) for content in self.content]
+            dict["content"] = content[0] if len(content) == 1 else content
 
         for key, value in self.metadata.items():
             if value and hasattr(value, "to_dict"):

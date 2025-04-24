@@ -124,12 +124,12 @@ class Tokenizer:
 
         if isinstance(prompt, list):
             prompt = [
-                event.to_dict()
-                for event in prompt
-                if isinstance(event, Interaction)
+                event.to_dict() for event in prompt if isinstance(event, Interaction)
             ]
+            kwargs["interactions"] = prompt
 
-        encoded_prompt = self._tokenizer.apply_chat_template(prompt, **kwargs)
+        encoded_prompt = self._tokenizer.apply_chat_template(prompt,**kwargs)
+
         if isinstance(encoded_prompt, str):
             encoded_prompt = self._tokenizer.encode(encoded_prompt, **kwargs)
         elif isinstance(encoded_prompt, list) and any(
