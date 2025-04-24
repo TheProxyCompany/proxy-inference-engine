@@ -57,7 +57,7 @@ class Interaction:
         dict = {
             "event_id": self.event_id,
             "role": self.role.value,
-            "content": [content.to_dict() for content in self.content],
+            "content": [str(content) for content in self.content],
         }
 
         for key, value in self.metadata.items():

@@ -107,3 +107,15 @@ class Model(nn.Module):
 
         logits = self.language_model(None, cache=cache, inputs_embeds=inputs_embeds)
         return logits
+
+    @property
+    def layers(self):
+        return self.language_model.model.layers
+
+    @property
+    def head_dim(self):
+        return self.language_model.model.head_dim
+
+    @property
+    def n_kv_heads(self):
+        return self.language_model.model.n_kv_heads

@@ -25,6 +25,7 @@ classifiers = [
 ]
 dependencies = [
     "pse",
+    "mlx_lm",
     "mlx",
     "pillow",
     "requests",

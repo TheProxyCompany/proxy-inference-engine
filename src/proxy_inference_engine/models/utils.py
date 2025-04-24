@@ -2,6 +2,7 @@ import glob
 import importlib
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -9,16 +10,21 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 from huggingface_hub import snapshot_download
+from pydantic import BaseModel
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class LargeLanguageModel:
+    model: nn.Module
+    hf_tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast
+    tokenizer_config: dict[str, Any]
 
-def load(
-    path_or_hf_repo: str,
-) -> tuple[nn.Module, PreTrainedTokenizer | PreTrainedTokenizerFast]:
+
+def load(path_or_hf_repo: str) -> LargeLanguageModel:
     """
     Load the model and tokenizer from a given path or a huggingface repository.
 
@@ -32,13 +38,17 @@ def load(
         ValueError: If model class or args class are not found.
     """
     model_path = get_model_path(path_or_hf_repo)
-    model = load_model(model_path.as_posix())
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model, tokenizer_config = load_model(model_path.as_posix())
+    hf_tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-    return model, tokenizer
+    return LargeLanguageModel(
+        model=model,
+        hf_tokenizer=hf_tokenizer,
+        tokenizer_config=tokenizer_config,
+    )
 
 
-def load_model(model_path: str) -> nn.Module:
+def load_model(model_path: str) -> tuple[nn.Module, dict[str, Any]]:
     """
     Load and initialize the model from a given path.
 
@@ -58,7 +68,10 @@ def load_model(model_path: str) -> nn.Module:
         model_config = json.load(f)
 
     architecture = get_model_architecture(model_config)
-    model_args = architecture.ModelArgs(**model_config)
+    if issubclass(architecture.ModelArgs, BaseModel):
+        model_args = architecture.ModelArgs(**model_config)
+    else:
+        model_args = architecture.ModelArgs.from_dict(model_config)
     model: nn.Module = architecture.Model(model_args)
 
     if hasattr(model, "sanitize") and model.sanitize is not None:
@@ -101,7 +114,15 @@ def load_model(model_path: str) -> nn.Module:
     assert isinstance(model, nn.Module)
     mx.eval(model.parameters())
     model.eval()
-    return model
+
+    try:
+        with open(path / "tokenizer_config.json") as f:
+            tokenizer_config = json.load(f)
+    except FileNotFoundError:
+        logger.warning(f"Tokenizer config not found for model at {path}")
+        tokenizer_config = {}
+
+    return model, tokenizer_config
 
 
 def get_model_architecture(config: dict[str, Any]) -> ModuleType:
@@ -138,21 +159,6 @@ def get_model_architecture(config: dict[str, Any]) -> ModuleType:
             raise ValueError(
                 "No model architecture found for the given model type."
             ) from e
-
-
-def load_config(model_path: Path) -> dict:
-    """
-    Load the model configuration from the given path.
-
-    Args:
-        model_path (Path): The path to the model.
-
-    Returns:
-        dict: The model configuration.
-    """
-    with open(model_path / "config.json") as f:
-        config = json.load(f)
-        return config
 
 
 def get_model_path(path_or_hf_repo: str, revision: str | None = None) -> Path:

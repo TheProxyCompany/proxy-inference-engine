@@ -1,9 +1,11 @@
-import json
 import hashlib
+import json
 import logging
 import pathlib
 
 import mlx.core as mx
+import mlx.nn as nn
+
 from proxy_inference_engine.cache.kv_cache import BaseCache, ReusableKVCache
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,15 @@ class PromptCache:
     def __call__(self, prompt_ids: mx.array) -> mx.array:
         return self.reuse_cache(prompt_ids)
 
+    def create_kv_cache(self, model: nn.Module) -> None:
+        if hasattr(model, "make_cache") and callable(model.make_cache):
+            self.cache = model.make_cache()
+            return
+
+        assert hasattr(model, "layers") and isinstance(model.layers, list), "Model must have a layers attribute"
+        layer_count = len(model.layers)
+        self.cache = [ReusableKVCache() for _ in range(layer_count)]
+
     def update(self, prompt_ids: mx.array) -> None:
         """
         Update the cache with the given prompt IDs.
@@ -46,7 +57,7 @@ class PromptCache:
         Reuse the cache for the given prompt and precomputed ids.
         """
 
-        if not self.cache or not self.computed_ids:
+        if not self.cache or self.computed_ids.size == 0:
             return prompt_ids
 
         common_prefix = 0

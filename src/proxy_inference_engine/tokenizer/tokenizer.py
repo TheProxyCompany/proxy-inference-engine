@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
-from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
-from transformers.models.auto.tokenization_auto import AutoTokenizer
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
@@ -29,17 +26,19 @@ class Tokenizer:
 
     def __init__(
         self,
-        tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
-        control_tokens: ControlTokens | None = None,
+        hf_tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
+        tokenizer_config: dict[str, Any],
     ) -> None:
         """
         Args:
             tokenizer: The base Hugging Face tokenizer to wrap
-            control_tokens: Optional control tokens - such as end-of-sequence or tool-use tokens
+            tokenizer_config: The tokenizer config
         """
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        self._tokenizer = tokenizer
-        self._control_tokens = control_tokens
+        self._tokenizer = hf_tokenizer
+        self._tokenizer_config = tokenizer_config
+        self._control_tokens = get_control_tokens(tokenizer_config)
+        self.load_chat_template()
 
     def load_chat_template(
         self,
@@ -112,7 +111,7 @@ class Tokenizer:
         Returns:
             Decoded text string
         """
-        return self._tokenizer.decode(tokens, **kwargs)
+        return self._tokenizer.decode(tokens.tolist(), **kwargs)
 
     def encode(
         self,
@@ -143,31 +142,3 @@ class Tokenizer:
             ]
 
         return mx.array(encoded_prompt)
-
-    @staticmethod
-    def load(model_path: str | Path, **kwargs) -> Tokenizer:
-        """Create a TokenizerWrapper by loading a Hugging Face tokenizer.
-
-        Args:
-            model_path: Path to the model/tokenizer
-            **kwargs: Additional args passed to AutoTokenizer.from_pretrained()
-
-        Returns:
-            Configured TokenizerWrapper instance
-        """
-        # Convert string path to Path object for consistent handling
-        model_path = Path(model_path) if isinstance(model_path, str) else model_path
-
-        # Load tokenizer configuration and determine appropriate control tokens
-        try:
-            with open(model_path / "tokenizer_config.json") as f:
-                tokenizer_config = json.load(f)
-                control_tokens = get_control_tokens(str(model_path), tokenizer_config)
-        except FileNotFoundError:
-            logger.warning(
-                f"Tokenizer config not found at {model_path}, using default control tokens"
-            )
-            control_tokens = get_control_tokens(str(model_path), {})
-
-        tokenizer = AutoTokenizer.from_pretrained(model_path, **kwargs)
-        return Tokenizer(tokenizer, control_tokens)

@@ -21,11 +21,12 @@ class InferenceEngine:
     """
 
     def __init__(self, model_path: str):
-        self.model, hf_tokenizer = load(model_path)
-        self.tokenizer = Tokenizer(hf_tokenizer)
+        llm = load(model_path)
+        self.model, self.tokenizer_config = llm.model, llm.tokenizer_config
+        self.tokenizer = Tokenizer(llm.hf_tokenizer, self.tokenizer_config)
         self.prompt_cache = PromptCache()
         self.structuring_engine = StructuringEngine(
-            hf_tokenizer, multi_token_sampling=True
+            llm.hf_tokenizer, multi_token_sampling=True
         )
         logger.info(f"Inference Engine initialized with model from {model_path}")
 
@@ -121,13 +122,16 @@ class InferenceEngine:
             current_input_ids: mx.array,
         ) -> tuple[mx.array, mx.array]:
             """Performs one forward pass, updates history, applies processors, and samples."""
-            # Perform the forward pass through the model
-            logits = self.model(
-                current_input_ids[None],  # Add batch dimension for the model
-                pixel_values=pixel_values,
-                mask=mask,
-                cache=self.prompt_cache.cache,  # Use the KV cache
-            )
+            model_kwargs: dict[str, Any] = {"cache": self.prompt_cache.cache}
+
+            # Only add optional parameters if they exist
+            if pixel_values is not None:
+                model_kwargs["pixel_values"] = pixel_values
+            if mask is not None:
+                model_kwargs["mask"] = mask
+
+            # Call model with appropriate arguments
+            logits = self.model(current_input_ids[None], **model_kwargs)
             # Extract logits for the most recent token
             last_token_logits = logits[:, -1, :]
             self.prompt_cache.update(current_input_ids)
@@ -147,9 +151,10 @@ class InferenceEngine:
             next_token_id = sampler(logprobs)
             return next_token_id, logprobs.squeeze(0)
 
-        # Get the tokens that need to be processed
+        if len(self.prompt_cache.cache) == 0:
+            self.prompt_cache.create_kv_cache(self.model)
+
         tokens_to_process = self.prompt_cache(prompt_ids)
-        # Perform the first inference step
         next_token_id, current_logprobs = _inference(tokens_to_process)
         mx.async_eval(next_token_id, current_logprobs)
 
@@ -194,7 +199,9 @@ class InferenceEngine:
         else:
             return sampler
 
-    def make_logits_processors(self, **kwargs) -> list[Callable[[mx.array, mx.array], mx.array]]:
+    def make_logits_processors(
+        self, **kwargs
+    ) -> list[Callable[[mx.array, mx.array], mx.array]]:
         """
         Return a list of logits processor functions.
         """
@@ -205,6 +212,8 @@ class InferenceEngine:
         if kwargs.get("repetition_penalty", 1.0) != 1.0:
             repetition_penalty = float(kwargs.get("repetition_penalty", 1.0))
             context_size = int(kwargs.get("context_size", 60))
-            logits_processors.append(repetition_penalty_logits_processor(repetition_penalty, context_size))
+            logits_processors.append(
+                repetition_penalty_logits_processor(repetition_penalty, context_size)
+            )
 
         return logits_processors

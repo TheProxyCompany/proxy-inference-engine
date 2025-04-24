@@ -19,7 +19,7 @@ class Content:
         Convert the content to a dictionary representation.
         """
         content_dict = {
-            "type": self.type,
+            "type": self.type.value,
         }
         match self.type:
             case Type.TEXT:
@@ -32,6 +32,9 @@ class Content:
                 content_dict["file_url"] = self.content
 
         return content_dict
+
+    def __str__(self) -> str:
+        return self.content
 
     @staticmethod
     def text(content: str) -> Content:

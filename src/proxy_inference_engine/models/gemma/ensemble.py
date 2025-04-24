@@ -70,6 +70,7 @@ class Gemma3MultiModalProjector(nn.Module):
 
 
 class Model(nn.Module):
+
     def __init__(self, config: ModelArgs):
         super().__init__()
         self.config = config
@@ -174,3 +175,15 @@ class Model(nn.Module):
             # mask=final_attention_mask_4d, # TODO: Fix mask
         )
         return logits
+
+    @property
+    def layers(self):
+        return self.language_model.model.layers
+
+    @property
+    def head_dim(self):
+        return self.language_model.model.head_dim
+
+    @property
+    def n_kv_heads(self):
+        return self.language_model.model.n_kv_heads
