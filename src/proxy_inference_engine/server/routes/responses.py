@@ -2,51 +2,52 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from proxy_inference_engine.engine.inference_engine import InferenceEngine
-from proxy_inference_engine.interaction import Interaction
-from proxy_inference_engine.server.app import get_inference_engine
+from proxy_inference_engine.engine import InferenceEngine
+from proxy_inference_engine.interaction import Interaction, Role
+from proxy_inference_engine.server.dependencies import get_inference_engine
 from proxy_inference_engine.server.exceptions import InferenceError
-from proxy_inference_engine.server.models.chat import (
-    ChatCompletionChoice,
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    ChatCompletionUsage,
-    ChatMessage,
+from proxy_inference_engine.server.models.responses import (
+    OutputMessage,
+    OutputTextContent,
+    ResponseObject,
+    ResponseRequest,
+    ResponseUsage,
 )
 
 logger = logging.getLogger(__name__)
 
-chat_router = APIRouter()
+responses_router = APIRouter()
 
 
-@chat_router.post(
-    "/chat/completions",
-    response_model=ChatCompletionResponse,
-    summary="Create a chat completion",
-    tags=["Chat"],
+@responses_router.post(
+    "/responses",
+    response_model=ResponseObject,
+    summary="Create a model response",
+    tags=["Responses"],
 )
-async def handle_completion_request(
-    request: ChatCompletionRequest,
+async def handle_response_request(
+    request: ResponseRequest,
     engine: InferenceEngine = Depends(get_inference_engine),  # noqa: B008
-) -> ChatCompletionResponse:
+) -> ResponseObject:
     """
-    Handles requests to the `/v1/chat/completions` endpoint.
+    Handles requests to the `/v1/responses` endpoint (MVP: text-only).
     """
-    logger.info(f"Handling chat completion request for model: {request.model}")
+    logger.info(f"Handling response request for model: {request.model}")
 
-    input_interactions: list[Interaction] = [
-        msg.to_interaction()
-        for msg in request.messages
-    ]
+    input_interactions: list[Interaction] = []
+    if request.instructions:
+        input_interactions.append(
+            Interaction.simple(role=Role.SYSTEM, content=request.instructions)
+        )
+    input_interactions.append(
+        Interaction.simple(role=Role.USER, content=request.input)
+    )
 
     inference_kwargs = {
-        "max_completion_tokens": request.max_completion_tokens,
+        "max_completion_tokens": request.max_output_tokens,
         "temperature": request.temperature,
         "top_p": request.top_p,
-        "top_k": request.top_k,
-        "min_p": request.min_p,
     }
-
     inference_kwargs = {k: v for k, v in inference_kwargs.items() if v is not None}
 
     try:
@@ -73,30 +74,22 @@ async def handle_completion_request(
             detail="An unexpected error occurred during completion.",
         ) from e
 
-    finish_reason = metadata.get("finish_reason", "unknown")
     prompt_tokens = metadata.get("prompt_tokens", 0)
     completion_tokens = metadata.get("completion_tokens", 0)
     total_tokens = metadata.get("total_tokens", 0)
 
-    choice = ChatCompletionChoice(
-        index=0,
-        message=ChatMessage(
-            role="assistant",
-            content=generated_text,
-        ),
-        finish_reason=finish_reason,
-    )
-
-    usage = ChatCompletionUsage(
+    output_content = OutputTextContent(text=generated_text)
+    response_message = OutputMessage(content=[output_content])
+    usage = ResponseUsage(
         input_tokens=prompt_tokens,
         output_tokens=completion_tokens,
         total_tokens=total_tokens,
     )
 
-    response = ChatCompletionResponse(
+    response = ResponseObject(
         model=request.model,
-        choices=[choice],
+        output=[response_message],
         usage=usage,
     )
-    logger.info(f"Chat completion request successful. ID: {response.id}")
+    logger.info(f"Response request successful. ID: {response.id}")
     return response

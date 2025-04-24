@@ -53,8 +53,7 @@ class InferenceEngine:
         self.prompt_cache.load_cached_prompt(encoded_prompt)
         logger.info(f"PROMPT:\n{self.tokenizer.decode(encoded_prompt)}")
         generated_ids_list, finish_reason = await self.generate(
-            encoded_prompt,
-            **inference_kwargs
+            encoded_prompt, **inference_kwargs
         )
         generated_text = self.tokenizer.decode(generated_ids_list)
         return generated_text, {
@@ -77,7 +76,7 @@ class InferenceEngine:
         """
         sampler = self.make_sampler(**inference_kwargs)
         logits_processors = self.make_logits_processors(**inference_kwargs)
-        max_tokens = int(inference_kwargs.get("max_tokens", -1))
+        max_completion_tokens = int(inference_kwargs.get("max_completion_tokens", -1))
 
         result: list[int] = []
         stop_reason: str = "finish"
@@ -99,7 +98,7 @@ class InferenceEngine:
             if self.structuring_engine.has_reached_accept_state:
                 break
 
-            if max_tokens > 0 and len(result) >= max_tokens:
+            if max_completion_tokens > 0 and len(result) >= max_completion_tokens:
                 stop_reason = "length"
                 break
 

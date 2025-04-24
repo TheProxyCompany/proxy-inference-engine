@@ -9,6 +9,8 @@ from proxy_inference_engine.server.config import load_settings
 from proxy_inference_engine.server.dependencies import get_inference_engine
 from proxy_inference_engine.server.exceptions import InferenceError
 from proxy_inference_engine.server.routes.chat import chat_router
+from proxy_inference_engine.server.routes.completions import completions_router
+from proxy_inference_engine.server.routes.responses import responses_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,7 +67,9 @@ def create_app() -> FastAPI:
     logger.info("Exception handlers registered.")
 
     # --- Include Routers ---
-    app.include_router(chat_router, prefix="/v1/chat", tags=["Chat"])
+    app.include_router(completions_router, prefix="/v1", tags=["Completions"])
+    app.include_router(chat_router, prefix="/v1", tags=["Chat"])
+    app.include_router(responses_router, prefix="/v1", tags=["Responses"])
     logger.info("Routers included.")
 
     logger.info("Application setup complete.")

@@ -1,4 +1,10 @@
 from proxy_inference_engine.server.models.chat import (
+    ChatCompletionChoice,
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ChatCompletionUsage,
+)
+from proxy_inference_engine.server.models.completions import (
     CompletionChoice,
     CompletionRequest,
     CompletionResponse,
@@ -6,6 +12,10 @@ from proxy_inference_engine.server.models.chat import (
 )
 
 __all__ = [
+    "ChatCompletionChoice",
+    "ChatCompletionRequest",
+    "ChatCompletionResponse",
+    "ChatCompletionUsage",
     "CompletionChoice",
     "CompletionRequest",
     "CompletionResponse",
