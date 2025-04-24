@@ -5,6 +5,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from proxy_inference_engine.server.models.responses.tools import (
+    Function,
+    ToolChoice,
+    ToolUseMode,
+)
+
 # --- Constants ---
 RESPONSE_ID_PREFIX = "resp_"
 RESPONSE_OBJECT = "response"
@@ -67,7 +73,7 @@ class ResponseUsage(BaseModel):
     )
 
 
-class ResponseObject(BaseModel):  # Renamed to avoid conflict with 'Response' type hint
+class ResponseObject(BaseModel):
     """Defines the response schema for the /v1/responses endpoint."""
 
     id: str = Field(
@@ -78,6 +84,22 @@ class ResponseObject(BaseModel):  # Renamed to avoid conflict with 'Response' ty
     created_at: int = Field(
         default_factory=get_current_timestamp,
         description="Unix timestamp of response creation.",
+    )
+    parallel_tool_calls: bool = Field(
+        default=False,
+        description="Whether to allow the model to run tool calls in parallel.",
+    )
+    temperature: float = Field(
+        default=1.0,
+        description="Sampling temperature.",
+    )
+    tool_choice: str | ToolChoice = Field(
+        default=ToolUseMode.AUTO.value,
+        description="How the model should select which tool (or tools) to use when generating a response.",
+    )
+    tools: list[Function] = Field(
+        default=[],
+        description="A list of tools that the model can use to generate a response.",
     )
     status: OutputStatus = OutputStatus.COMPLETED
     model: str = Field(description="Model ID used for the response.")

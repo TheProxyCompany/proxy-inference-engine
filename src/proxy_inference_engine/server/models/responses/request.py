@@ -1,11 +1,25 @@
 from pydantic import BaseModel, Field
 
+from src.proxy_inference_engine.server.models.responses.structure import ResponseFormat
+from src.proxy_inference_engine.server.models.responses.tools import (
+    Function,
+    ToolChoice,
+)
+
 
 class ResponseRequest(BaseModel):
     """Defines the request schema for the /v1/responses endpoint (MVP)."""
 
     model: str = Field(description="Model ID used to generate the response.")
     input: str = Field(description="Text input to the model.")
+    stream: bool | None = Field(
+        default=None,
+        description="Whether to stream the response.",
+    )
+    parallel_tool_calls: bool | None = Field(
+        default=None,
+        description="Whether to allow the model to run tool calls in parallel.",
+    )
     instructions: str | None = Field(
         default=None,
         description="System/developer instructions for the model.",
@@ -26,4 +40,16 @@ class ResponseRequest(BaseModel):
         ge=0.0,
         le=1.0,
         description="Nucleus sampling threshold.",
+    )
+    tool_choice: str | ToolChoice | None = Field(
+        default=None,
+        description="How the model should select which tool (or tools) to use when generating a response.",
+    )
+    tools: list[Function] | None = Field(
+        default=None,
+        description="A list of tools that the model can use to generate a response.",
+    )
+    format: ResponseFormat | None = Field(
+        default=None,
+        description="The format of the response.",
     )
