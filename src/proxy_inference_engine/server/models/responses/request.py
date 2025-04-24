@@ -3,7 +3,8 @@ from pydantic import BaseModel, Field
 from proxy_inference_engine.server.models.responses.format import ResponseFormat
 from src.proxy_inference_engine.server.models.responses.tools import (
     Function,
-    ToolChoice,
+    FunctionID,
+    ToolUseMode,
 )
 
 
@@ -53,8 +54,8 @@ class ResponseRequest(BaseModel):
         le=1.0,
         description="Minimum probability threshold for token consideration.",
     )
-    tool_choice: str | ToolChoice | None = Field(
-        default=None,
+    tool_choice: ToolUseMode | FunctionID = Field(
+        default=ToolUseMode.AUTO,
         description="How the model should select which tool (or tools) to use when generating a response.",
     )
     tools: list[Function] | None = Field(

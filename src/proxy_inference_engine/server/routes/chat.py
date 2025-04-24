@@ -45,6 +45,10 @@ async def handle_completion_request(
         "top_p": request.top_p,
         "top_k": request.top_k,
         "min_p": request.min_p,
+        "parallel_tool_calls": request.parallel_tool_calls,
+        "tool_choice": request.tool_choice,
+        "tools": request.tools,
+        "response_format": request.response_format,
     }
 
     inference_kwargs = {k: v for k, v in inference_kwargs.items() if v is not None}

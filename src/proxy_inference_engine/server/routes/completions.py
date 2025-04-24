@@ -81,9 +81,9 @@ async def handle_completion_request(
         "temperature": request.temperature,
         "top_p": request.top_p,
         "top_k": request.top_k,
-        "min_p": request.min_p,
+        "min_p": request.min_p
     }
-
+    
     try:
         generated_text, metadata = await engine(
             input_interactions,

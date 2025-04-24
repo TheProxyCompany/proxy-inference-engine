@@ -1,5 +1,7 @@
 import secrets
 import time
+from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +39,73 @@ class ChatMessage(BaseModel):
             role,
             [Content.text(self.content)],
         )
+
+class ChatCompletionToolChoice(BaseModel):
+    """Defines a tool for the chat completion request."""
+
+    class FunctionName(BaseModel):
+        """Defines a function name for the chat completion tool."""
+
+        name: str = Field(description="The name of the function to call.")
+
+    type: Literal["function"] = "function"
+    function: FunctionName = Field(description="The function to call.")
+
+class ChatCompletionToolUseMode(Enum):
+    """Controls which (if any) tool is called by the model."""
+
+    AUTO = "auto"
+    REQUIRED = "required"
+    NONE = "none"
+
+class ChatCompletionFunction(BaseModel):
+    """Defines a function for the response request."""
+
+    name: str = Field(description="The name of the function to call.")
+    type: Literal["function"] = "function"
+    description: str = Field(
+        description="A description of the function. Used by the model to determine whether or not to call the function."
+    )
+    strict: bool = Field(
+        default=True,
+        description="Whether to enforce strict parameter validation.",
+    )
+    parameters: dict = Field(
+        description="A JSON schema object describing the parameters of the function."
+    )
+
+class ChatCompletionTool(BaseModel):
+    """Defines a tool for the chat completion request."""
+
+    type: Literal["function"] = "function"
+    function: ChatCompletionFunction = Field(description="The function to call.")
+
+
+class ChatCompletionJSONSchemaResponseFormat(BaseModel):
+    """Defines the response format for the chat completion request."""
+
+    class JSONSchema(BaseModel):
+        """Defines the JSON schema for the response format."""
+
+        name: str = Field(description="The name of the JSON schema.")
+        description: str | None = Field(
+            default=None,
+            description="The description of the JSON schema."
+        )
+        strict: bool | None = Field(
+            default=None,
+            description="Whether to enforce strict validation of the JSON schema."
+        )
+        schema: dict = Field(description="The JSON schema for the response format.")
+
+    type: Literal["json_schema"] = "json_schema"
+    json_schema: JSONSchema = Field(description="The JSON schema for the response format.")
+
+class ChatCompletionTextResponseFormat(BaseModel):
+    """Defines the response format for the chat completion request."""
+
+    type: Literal["text"] = "text"
+
 
 class ChatCompletionRequest(BaseModel):
     """Defines the request schema for the chat completion endpoint."""
@@ -77,7 +146,24 @@ class ChatCompletionRequest(BaseModel):
         le=1.0,
         description="Minimum probability threshold for token consideration.",
     )
-
+    parallel_tool_calls: bool | None = Field(
+        default=None,
+        description="Whether to allow the model to run tool calls in parallel.",
+    )
+    tool_choice: ChatCompletionToolUseMode | ChatCompletionToolChoice | None = Field(
+        default=None,
+        description="Controls which (if any) tool is called by the model.",
+    )
+    tools: list[ChatCompletionTool] | None = Field(
+        default=None,
+        description="A list of tools that the model can use to generate a response.",
+    )
+    response_format: (
+        ChatCompletionTextResponseFormat | ChatCompletionJSONSchemaResponseFormat | None
+    ) = Field(
+        default=None,
+        description="The format of the response.",
+    )
 
 class ChatCompletionChoice(BaseModel):
     """Represents a single generated chat completion choice."""
@@ -102,7 +188,6 @@ class ChatCompletionUsage(BaseModel):
     )
 
 # --- Main Response Model ---
-
 class ChatCompletionResponse(BaseModel):
     """Defines the response schema for the chat completion endpoint."""
 

@@ -52,7 +52,7 @@ async def handle_response_request(
         "parallel_tool_calls": request.parallel_tool_calls,
         "tool_choice": request.tool_choice,
         "tools": request.tools,
-        "text": request.text,
+        "response_format": request.text.format if request.text else None,
     }
     inference_kwargs = {k: v for k, v in inference_kwargs.items() if v is not None}
 

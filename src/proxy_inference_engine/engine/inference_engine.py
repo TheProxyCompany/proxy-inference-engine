@@ -25,10 +25,15 @@ class InferenceEngine:
         self.model, self.tokenizer_config = llm.model, llm.tokenizer_config
         self.tokenizer = Tokenizer(llm.hf_tokenizer, self.tokenizer_config)
         self.prompt_cache = PromptCache()
-        self.structuring_engine = StructuringEngine(
-            llm.hf_tokenizer, multi_token_sampling=True
-        )
+        self.structuring_engine = StructuringEngine(llm.hf_tokenizer, multi_token_sampling=True)
         logger.info(f"Inference Engine initialized with model from {model_path}")
+
+    def configure(self, **kwargs) -> None:
+        """
+        Configure the inference engine.
+        """
+        
+
 
     async def __call__(
         self,
