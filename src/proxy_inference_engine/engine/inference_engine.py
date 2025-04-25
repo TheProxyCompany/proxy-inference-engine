@@ -28,13 +28,6 @@ class InferenceEngine:
         self.structuring_engine = StructuringEngine(llm.hf_tokenizer, multi_token_sampling=True)
         logger.info(f"Inference Engine initialized with model from {model_path}")
 
-    def configure(self, **kwargs) -> None:
-        """
-        Configure the inference engine.
-        """
-        pass
-
-
     async def __call__(
         self,
         prompt: list[Interaction],
@@ -47,6 +40,7 @@ class InferenceEngine:
             prompt (list[Interaction]): The input prompt for completion.
             **inference_kwargs: Additional keyword arguments to use for inference.
         """
+        breakpoint()
         tokenizer_config = {
             "prompt": prompt,
             **inference_kwargs,

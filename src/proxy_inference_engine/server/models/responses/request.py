@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 
 from proxy_inference_engine.server.models.responses.format import ResponseFormat
-from src.proxy_inference_engine.server.models.responses.tools import (
+from proxy_inference_engine.server.models.responses.tools import (
     Function,
     FunctionID,
     ToolUseMode,

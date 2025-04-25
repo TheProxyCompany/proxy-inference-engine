@@ -29,3 +29,7 @@ class JSONSchemaResponseFormat(BaseModel):
         default=False,
         description="Whether to enforce strict validation of the JSON schema.",
     )
+
+    model_config = {
+        "protected_namespaces": ()
+    }
