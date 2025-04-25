@@ -1,7 +1,7 @@
 # Proxy Inference Engine (PIE)
 
 <h3 align="center">
-  <strong>Optimized MLX inference engine for Apple Silicon, powering reliable AI within The Proxy Company ecosystem.</strong>
+  <strong>Optimized MLX inference engine for Apple Silicon.</strong>
 </h3>
 
 <p align="center">
