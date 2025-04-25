@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from proxy_inference_engine.interaction import Role
+from proxy_inference_engine.interaction import InteractionRole
 from proxy_inference_engine.interaction.content import Content
 
 
@@ -19,7 +19,7 @@ class Interaction:
 
     def __init__(
         self,
-        role: Role,
+        role: InteractionRole,
         content: list[Content],
         **kwargs,
     ) -> None:
@@ -120,7 +120,7 @@ class Interaction:
             return None
 
     @staticmethod
-    def simple(role: Role, content: str) -> Interaction:
+    def simple(role: InteractionRole, content: str) -> Interaction:
         return Interaction(
             role,
             [Content.text(content)],

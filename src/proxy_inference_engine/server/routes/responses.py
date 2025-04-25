@@ -1,12 +1,18 @@
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from proxy_inference_engine.engine import InferenceEngine
-from proxy_inference_engine.interaction import Interaction, Role
+from proxy_inference_engine.interaction import (
+    Interaction,
+    InteractionRole,
+    InteractionType,
+)
 from proxy_inference_engine.server.dependencies import get_inference_engine
 from proxy_inference_engine.server.exceptions import InferenceError
 from proxy_inference_engine.server.models.responses import (
+    OutputFunctionCall,
     OutputMessage,
     OutputTextContent,
     ResponseObject,
@@ -37,10 +43,12 @@ async def handle_response_request(
     input_interactions: list[Interaction] = []
     if request.instructions:
         input_interactions.append(
-            Interaction.simple(role=Role.SYSTEM, content=request.instructions)
+            Interaction.simple(
+                role=InteractionRole.SYSTEM, content=request.instructions
+            )
         )
     input_interactions.append(
-        Interaction.simple(role=Role.USER, content=request.input)
+        Interaction.simple(role=InteractionRole.USER, content=request.input)
     )
 
     inference_kwargs = {
@@ -57,7 +65,7 @@ async def handle_response_request(
     inference_kwargs = {k: v for k, v in inference_kwargs.items() if v is not None}
 
     try:
-        generated_text, metadata = await engine(
+        new_interaction = await engine(
             input_interactions,
             **inference_kwargs,
         )
@@ -80,12 +88,25 @@ async def handle_response_request(
             detail="An unexpected error occurred during completion.",
         ) from e
 
-    prompt_tokens = metadata.get("prompt_tokens", 0)
-    completion_tokens = metadata.get("completion_tokens", 0)
-    total_tokens = metadata.get("total_tokens", 0)
+    prompt_tokens = new_interaction.metadata.get("prompt_tokens", 0)
+    completion_tokens = new_interaction.metadata.get("completion_tokens", 0)
+    total_tokens = new_interaction.metadata.get("total_tokens", 0)
 
-    output_content = OutputTextContent(text=generated_text)
-    response_message = OutputMessage(content=[output_content])
+    response_content = []
+    for item in new_interaction.content:
+        match item.type:
+            case InteractionType.TEXT:
+                response_content.append(OutputTextContent(text=item.content))
+            case InteractionType.TOOL_CALL:
+                assert isinstance(item.content, dict)
+                name, arguments = item.content.get("name"), item.content.get("arguments")
+                assert isinstance(name, str)
+                assert isinstance(arguments, dict)
+                response_content.append(OutputFunctionCall(name=name, arguments=json.dumps(arguments)))
+            case _:
+                logger.warning(f"Unknown content type: {item.type}")
+
+    response_message = OutputMessage(content=response_content)
     usage = ResponseUsage(
         input_tokens=prompt_tokens,
         output_tokens=completion_tokens,
@@ -96,6 +117,14 @@ async def handle_response_request(
         model=request.model,
         output=[response_message],
         usage=usage,
+        min_p=request.min_p,
+        top_p=request.top_p,
+        top_k=request.top_k,
+        temperature=request.temperature,
+        parallel_tool_calls=request.parallel_tool_calls or False,
+        tool_choice=request.tool_choice,
+        tools=request.tools or [],
+        text=request.text,
     )
     logger.info(f"Response request successful. ID: {response.id}")
     return response

@@ -6,6 +6,8 @@ import mlx.core as mx
 from pse.structuring_engine import StructuringEngine
 
 from proxy_inference_engine.cache import PromptCache
+from proxy_inference_engine.interaction import InteractionRole
+from proxy_inference_engine.interaction.content import Content
 from proxy_inference_engine.interaction.interaction import Interaction
 from proxy_inference_engine.logits_processors import repetition_penalty_logits_processor
 from proxy_inference_engine.models import load
@@ -29,18 +31,14 @@ class InferenceEngine:
         self.structuring_engine = StructuringEngine(
             llm.hf_tokenizer,
             whitelist_control_tokens=self.tokenizer.control_tokens.end_tokens(),
-            multi_token_sampling=True
+            multi_token_sampling=True,
         )
         self.root_state_machine = RootStateMachine()
         self.samplers: dict[str, Callable[[mx.array], mx.array]] = {}
         self.logits_processors: dict[str, list[Callable[[mx.array, mx.array], mx.array]]] = {}
         logger.info(f"Inference Engine initialized with model from {model_path}")
 
-    async def __call__(
-        self,
-        prompt: list[Interaction],
-        **inference_kwargs,
-    ) -> tuple[str, dict[str, Any]]:
+    async def __call__(self, prompt: list[Interaction], **inference_kwargs) -> Interaction:
         """
         Generate a completion for the given prompt.
 
@@ -72,40 +70,49 @@ class InferenceEngine:
         for state_id, state in self.root_state_machine.available_states.items():
             state_kwargs = state.generation_kwargs or inference_kwargs
             self.samplers[state_id] = self.make_sampler(**state_kwargs)
-            self.logits_processors[state_id] = self.make_logits_processors(**state_kwargs)
+            self.logits_processors[state_id] = self.make_logits_processors(
+                **state_kwargs
+            )
 
         self.samplers["root"] = self.make_sampler(**inference_kwargs)
         self.logits_processors["root"] = self.make_logits_processors(**inference_kwargs)
-        logger.info(f"Loaded {len(self.samplers)} samplers and {len(self.logits_processors)} logits processors")
+        logger.info(
+            f"Loaded {len(self.samplers)} samplers and {len(self.logits_processors)} logits processors"
+        )
 
         generated_ids, finish_reason = await self.generate(encoded_prompt, **inference_kwargs)
         logger.info(f"\nGENERATED:\n{self.tokenizer.decode(generated_ids)}\n\n")
 
-        for state_id, output in self.structuring_engine.get_stateful_structured_output():
-            engine_state = self.root_state_machine.available_states.get(state_id)
-            if not engine_state:
-                logger.warning(f"Unknown state: {state_id}")
-                continue
-
-            logger.info(f"STATE: {engine_state.identifier}")
-            logger.info(f"OUTPUT: {output}")
-
-            match engine_state.identifier:
-                case "structured_output":
-                    pass
-                case "tool_call":
-                    pass
-                case "freeform_text":
-                    pass
-                case _:
-                    logger.warning(f"Unknown state: {engine_state.identifier}")
-
-        return self.tokenizer.decode(generated_ids), {
+        metadata = {
             "finish_reason": finish_reason,
             "prompt_tokens": prompt_length,
             "completion_tokens": len(generated_ids),
             "total_tokens": prompt_length + len(generated_ids),
         }
+
+        content = []
+
+        for state_id, output in self.structuring_engine.get_stateful_structured_output():
+            if (engine_state := self.root_state_machine.available_states.get(state_id)) is None:
+                logger.warning(f"Unknown state: {state_id}")
+                continue
+
+            logger.debug(f"STATE: {engine_state.identifier}")
+            logger.debug(f"OUTPUT: {output}")
+
+            match engine_state.identifier:
+                case "structured_output" | "freeform_text":
+                    content.append(Content.text(output))
+                case "tool_call":
+                    content.append(Content.tool_call(output["name"], output["arguments"]))
+                case _:
+                    logger.warning(f"Unknown state: {engine_state.identifier}")
+
+        return Interaction(
+            role=InteractionRole.AGENT,
+            content=content,
+            **metadata,
+        )
 
     async def generate(
         self,
@@ -213,7 +220,6 @@ class InferenceEngine:
             if step_count % 256 == 0:
                 mx.clear_cache()
 
-
     def make_sampler(self, **kwargs) -> Callable[[mx.array], mx.array]:
         """
         Return a sampler function.
@@ -234,7 +240,9 @@ class InferenceEngine:
         )
         return lambda x: self.structuring_engine.sample(x, sampler)
 
-    def make_logits_processors(self, **kwargs) -> list[Callable[[mx.array, mx.array], mx.array]]:
+    def make_logits_processors(
+        self, **kwargs
+    ) -> list[Callable[[mx.array, mx.array], mx.array]]:
         """
         Return a list of logits processor functions.
         """

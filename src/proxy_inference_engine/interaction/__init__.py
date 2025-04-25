@@ -1,7 +1,7 @@
 from enum import Enum
 
 
-class Role(Enum):
+class InteractionRole(Enum):
     """
     Enumeration of possible roles for an interaction.
     """
@@ -11,7 +11,8 @@ class Role(Enum):
     TOOL = "tool"
     USER = "user"
 
-class Type(Enum):
+
+class InteractionType(Enum):
     """
     Enumeration of possible types for an interaction.
     """
@@ -21,7 +22,8 @@ class Type(Enum):
     FILE = "file"
     AUDIO = "audio"
     VIDEO = "video"
-    ACTION = "action"
+    TOOL_CALL = "tool_call"
+
 
 from proxy_inference_engine.interaction.content import Content  # noqa: E402
 from proxy_inference_engine.interaction.interaction import Interaction  # noqa: E402

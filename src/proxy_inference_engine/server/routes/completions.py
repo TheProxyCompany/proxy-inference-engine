@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from proxy_inference_engine.engine.inference_engine import InferenceEngine
 from proxy_inference_engine.interaction import (
     Interaction,
-    Role,
+    InteractionRole,
 )
 from proxy_inference_engine.server.dependencies import get_inference_engine
 from proxy_inference_engine.server.exceptions import InferenceError
@@ -56,7 +56,7 @@ async def handle_completion_request(
     if isinstance(request.prompt, str):
         input_interactions = [
             Interaction.simple(
-                role=Role.USER,
+                role=InteractionRole.USER,
                 content=request.prompt,
             )
         ]
@@ -66,7 +66,7 @@ async def handle_completion_request(
         )
         input_interactions = [
             Interaction.simple(
-                role=Role.USER,
+                role=InteractionRole.USER,
                 content=request.prompt[0],
             )
         ]
@@ -81,9 +81,9 @@ async def handle_completion_request(
         "temperature": request.temperature,
         "top_p": request.top_p,
         "top_k": request.top_k,
-        "min_p": request.min_p
+        "min_p": request.min_p,
     }
-    
+
     try:
         generated_text, metadata = await engine(
             input_interactions,

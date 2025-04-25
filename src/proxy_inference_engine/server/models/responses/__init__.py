@@ -1,4 +1,5 @@
 from proxy_inference_engine.server.models.responses.output import (
+    OutputFunctionCall,
     OutputMessage,
     OutputTextContent,
     ResponseObject,
@@ -6,4 +7,4 @@ from proxy_inference_engine.server.models.responses.output import (
 )
 from proxy_inference_engine.server.models.responses.request import ResponseRequest
 
-__all__ = ["OutputMessage", "OutputTextContent", "ResponseObject", "ResponseRequest", "ResponseUsage"]
+__all__ = ["OutputFunctionCall", "OutputMessage", "OutputTextContent", "ResponseObject", "ResponseRequest", "ResponseUsage"]

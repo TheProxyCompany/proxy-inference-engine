@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import secrets
 import time
 from enum import Enum
@@ -8,7 +10,8 @@ from pydantic import BaseModel, Field
 from proxy_inference_engine.interaction import (
     Content,
     Interaction,
-    Role,
+    InteractionRole,
+    InteractionType,
 )
 
 # --- Constants ---
@@ -32,12 +35,56 @@ class ChatMessage(BaseModel):
 
     role: str = Field(description="The role of the messages author.")
     content: str = Field(description="The contents of the message.")
+    tool_calls: list[ChatCompletionToolUsage] = Field(
+        default=[],
+        description="The tool calls that were made in the message.",
+    )
 
     def to_interaction(self) -> Interaction:
-        role = Role(self.role)
+        role = InteractionRole(self.role)
         return Interaction(
             role,
             [Content.text(self.content)],
+        )
+
+    @staticmethod
+    def from_interaction(interaction: Interaction) -> ChatMessage:
+        role = interaction.role.value
+        content = ""
+        tool_calls = []
+        for item in interaction.content:
+            if item.type == InteractionType.TEXT:
+                content = item.content
+            elif item.type == InteractionType.TOOL_CALL:
+                tool_calls.append(ChatCompletionToolUsage.from_content(item))
+
+        return ChatMessage(role=role, content=content, tool_calls=tool_calls)
+
+class ChatCompletionToolUsage(BaseModel):
+    """Represents the usage of a tool in a chat completion."""
+
+    class UsedFunction(BaseModel):
+        """Represents a function that was used in a chat completion."""
+        name: str = Field(description="The name of the function to call.")
+        arguments: str = Field(description="The arguments to pass to the function. JSON encoded.")
+
+    type: Literal["function"] = "function"
+    id: str = Field(description="The unique identifier of the tool.")
+    function: UsedFunction = Field(description="The function that was used.")
+
+    @staticmethod
+    def from_content(content: Content) -> ChatCompletionToolUsage:
+        if content.type != InteractionType.TOOL_CALL:
+            raise ValueError("Content is not a tool call.")
+
+        used_function = ChatCompletionToolUsage.UsedFunction(
+            name=content.content["name"],
+            arguments=content.content["arguments"],
+        )
+
+        return ChatCompletionToolUsage(
+            id=content.id,
+            function=used_function,
         )
 
 class ChatCompletionToolChoice(BaseModel):
@@ -54,6 +101,7 @@ class ChatCompletionToolChoice(BaseModel):
     def to_dict(self):
         return {"type": "function", "name": self.function.name}
 
+
 class ChatCompletionToolUseMode(Enum):
     """Controls which (if any) tool is called by the model."""
 
@@ -63,6 +111,7 @@ class ChatCompletionToolUseMode(Enum):
 
     def to_dict(self):
         return self.value
+
 
 class ChatCompletionFunction(BaseModel):
     """Defines a function for the response request."""
@@ -79,6 +128,7 @@ class ChatCompletionFunction(BaseModel):
     parameters: dict = Field(
         description="A JSON schema object describing the parameters of the function."
     )
+
 
 class ChatCompletionTool(BaseModel):
     """Defines a tool for the chat completion request."""
@@ -108,23 +158,24 @@ class ChatCompletionJSONSchemaResponseFormat(BaseModel):
 
         name: str = Field(description="The name of the JSON schema.")
         description: str | None = Field(
-            default=None,
-            description="The description of the JSON schema."
+            default=None, description="The description of the JSON schema."
         )
         strict: bool | None = Field(
             default=None,
-            description="Whether to enforce strict validation of the JSON schema."
+            description="Whether to enforce strict validation of the JSON schema.",
         )
-        json_schema: dict = Field(description="The JSON schema for the response format.", alias="schema")
+        json_schema: dict = Field(
+            description="The JSON schema for the response format.", alias="schema"
+        )
 
     type: Literal["json_schema"] = "json_schema"
-    json_schema: JSONSchema = Field(description="The JSON schema for the response format.")
+    json_schema: JSONSchema = Field(
+        description="The JSON schema for the response format."
+    )
 
     def to_dict(self):
-        return {
-            "type": "json_schema",
-            **self.json_schema.model_dump()
-        }
+        return {"type": "json_schema", **self.json_schema.model_dump()}
+
 
 class ChatCompletionTextResponseFormat(BaseModel):
     """Defines the response format for the chat completion request."""
@@ -133,6 +184,7 @@ class ChatCompletionTextResponseFormat(BaseModel):
 
     def to_dict(self):
         return self.model_dump()
+
 
 class ChatCompletionRequest(BaseModel):
     """Defines the request schema for the chat completion endpoint."""
@@ -192,6 +244,7 @@ class ChatCompletionRequest(BaseModel):
         description="The format of the response.",
     )
 
+
 class ChatCompletionChoice(BaseModel):
     """Represents a single generated chat completion choice."""
 
@@ -200,6 +253,7 @@ class ChatCompletionChoice(BaseModel):
     finish_reason: str | None = Field(
         description="Reason generation stopped (e.g., 'stop', 'length', 'tool_calls')."
     )
+
 
 class ChatCompletionUsage(BaseModel):
     """Provides token usage statistics for the chat completion request."""
@@ -213,6 +267,7 @@ class ChatCompletionUsage(BaseModel):
     total_tokens: int = Field(
         description="The sum of `input_tokens` and `output_tokens`."
     )
+
 
 # --- Main Response Model ---
 class ChatCompletionResponse(BaseModel):

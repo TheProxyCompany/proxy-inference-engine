@@ -53,7 +53,7 @@ async def handle_completion_request(
     inference_kwargs = {k: v for k, v in inference_kwargs.items() if v is not None}
 
     try:
-        generated_text, metadata = await engine(
+        new_interaction = await engine(
             input_interactions,
             **inference_kwargs,
         )
@@ -76,17 +76,14 @@ async def handle_completion_request(
             detail="An unexpected error occurred during completion.",
         ) from e
 
-    finish_reason = metadata.get("finish_reason", "unknown")
-    prompt_tokens = metadata.get("prompt_tokens", 0)
-    completion_tokens = metadata.get("completion_tokens", 0)
-    total_tokens = metadata.get("total_tokens", 0)
+    finish_reason = new_interaction.metadata.get("finish_reason", "unknown")
+    prompt_tokens = new_interaction.metadata.get("prompt_tokens", 0)
+    completion_tokens = new_interaction.metadata.get("completion_tokens", 0)
+    total_tokens = new_interaction.metadata.get("total_tokens", 0)
 
     choice = ChatCompletionChoice(
         index=0,
-        message=ChatMessage(
-            role="assistant",
-            content=generated_text,
-        ),
+        message=ChatMessage.from_interaction(new_interaction),
         finish_reason=finish_reason,
     )
 
