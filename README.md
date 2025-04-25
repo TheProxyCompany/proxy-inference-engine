@@ -8,7 +8,7 @@
   <img src="https://raw.githubusercontent.com/TheProxyCompany/proxy-inference-engine/main/logo.png" alt="Proxy Inference Engine" style="object-fit: contain; max-width: 50%; padding-top: 20px;"/>
 </p>
 
-**Proxy Inference Engine (PIE)** is the specialized inference layer developed by The Proxy Company, built upon the foundation of Apple's [MLX framework](https://github.com/ml-explore/mlx). It is designed for high-performance execution of language models (including VLMs) on Apple Silicon hardware.
+**Proxy Inference Engine (PIE)** is the specialized inference layer developed by The Proxy Company, built upon the foundation of Apple's [MLX framework](https://github.com/ml-explore/mlx). It is designed for high-performance inference of language models (including VLMs) on Apple Silicon hardware.
 
 This engine is the successor to the experimental `mlx-proxy` repository (now archived).
 
@@ -24,6 +24,6 @@ pip install proxy-inference-engine
 
 - Efficient key-value caching strategies for transformer models
 - Advanced logits processing for high-quality text generation
-- Multiple sampling methods (categorical, top-k, top-p, min-p)
+- Multiple sampling methods
 - Vision model support for multimodal inference
 - Optimized for MLX and Apple Silicon

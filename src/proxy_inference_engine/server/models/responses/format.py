@@ -10,6 +10,9 @@ class ResponseFormat(BaseModel):
 
     format: TextResponseFormat | JSONSchemaResponseFormat = Field(description="The response format to use.")
 
+    def to_dict(self):
+        return self.format.model_dump()
+
 class TextResponseFormat(BaseModel):
     """Defines the response format for the response request."""
 

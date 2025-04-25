@@ -46,11 +46,10 @@ async def handle_completion_request(
         "top_k": request.top_k,
         "min_p": request.min_p,
         "parallel_tool_calls": request.parallel_tool_calls,
-        "tool_choice": request.tool_choice,
-        "tools": request.tools,
-        "response_format": request.response_format,
+        "tool_choice": request.tool_choice.to_dict() if request.tool_choice else None,
+        "tools": [tool.to_dict() for tool in request.tools] if request.tools else None,
+        "response_format": request.response_format.to_dict() if request.response_format else None,
     }
-
     inference_kwargs = {k: v for k, v in inference_kwargs.items() if v is not None}
 
     try:

@@ -10,6 +10,7 @@ from proxy_inference_engine.interaction.interaction import Interaction
 from proxy_inference_engine.logits_processors import repetition_penalty_logits_processor
 from proxy_inference_engine.models import load
 from proxy_inference_engine.samplers import make_sampler
+from proxy_inference_engine.state_machine import RootStateMachine
 from proxy_inference_engine.tokenizer import Tokenizer
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,12 @@ class InferenceEngine:
         self.model, self.tokenizer_config = llm.model, llm.tokenizer_config
         self.tokenizer = Tokenizer(llm.hf_tokenizer, self.tokenizer_config)
         self.prompt_cache = PromptCache()
-        self.structuring_engine = StructuringEngine(llm.hf_tokenizer, multi_token_sampling=True)
+        self.structuring_engine = StructuringEngine(
+            llm.hf_tokenizer,
+            whitelist_control_tokens=self.tokenizer.control_tokens.end_tokens(),
+            multi_token_sampling=True
+        )
+        self.root_state_machine = RootStateMachine()
         logger.info(f"Inference Engine initialized with model from {model_path}")
 
     async def __call__(
@@ -40,7 +46,6 @@ class InferenceEngine:
             prompt (list[Interaction]): The input prompt for completion.
             **inference_kwargs: Additional keyword arguments to use for inference.
         """
-        breakpoint()
         tokenizer_config = {
             "prompt": prompt,
             **inference_kwargs,
@@ -51,22 +56,45 @@ class InferenceEngine:
 
         self.prompt_cache.load_cached_prompt(encoded_prompt)
         logger.info(f"PROMPT:\n{self.tokenizer.decode(encoded_prompt)}")
-        generated_ids_list, finish_reason = await self.generate(
-            encoded_prompt, **inference_kwargs
-        )
-        generated_text = self.tokenizer.decode(generated_ids_list)
-        return generated_text, {
+
+        self.root_state_machine.configure(**inference_kwargs)
+        self.structuring_engine.reset()
+        self.structuring_engine.configure(self.root_state_machine)
+
+        generated_ids, finish_reason = await self.generate(encoded_prompt, **inference_kwargs)
+        logger.info(f"\nGENERATED:\n{self.tokenizer.decode(generated_ids)}\n\n")
+
+        for state_id, output in self.structuring_engine.get_stateful_structured_output():
+            engine_state = self.root_state_machine.available_states.get(state_id)
+            if not engine_state:
+                logger.warning(f"Unknown state: {state_id}")
+                continue
+
+            logger.info(f"STATE: {engine_state.identifier}")
+            logger.info(f"OUTPUT: {output}")
+
+            match engine_state.identifier:
+                case "structured_output":
+                    pass
+                case "tool_call":
+                    pass
+                case "freeform_text":
+                    pass
+                case _:
+                    logger.warning(f"Unknown state: {engine_state.identifier}")
+
+        return self.tokenizer.decode(generated_ids), {
             "finish_reason": finish_reason,
             "prompt_tokens": prompt_length,
-            "completion_tokens": len(generated_ids_list),
-            "total_tokens": prompt_length + len(generated_ids_list),
+            "completion_tokens": len(generated_ids),
+            "total_tokens": prompt_length + len(generated_ids),
         }
 
     async def generate(
         self,
         prompt_ids: mx.array,
         **inference_kwargs,
-    ) -> tuple[mx.array, str]:
+    ) -> tuple[list[int], str]:
         """
         Generate a completion for the given prompt.
 
@@ -95,13 +123,14 @@ class InferenceEngine:
                 result.append(token_id)
 
             if self.structuring_engine.has_reached_accept_state:
+                stop_reason = "tool_calls"
                 break
 
             if max_completion_tokens > 0 and len(result) >= max_completion_tokens:
                 stop_reason = "length"
                 break
 
-        return mx.array(result), stop_reason
+        return result, stop_reason
 
     def generate_step(
         self,
@@ -118,9 +147,7 @@ class InferenceEngine:
             tuples of (next_token_id, log_probabilities).
         """
 
-        def _inference(
-            current_input_ids: mx.array,
-        ) -> tuple[mx.array, mx.array]:
+        def _inference(current_input_ids: mx.array) -> tuple[mx.array, mx.array]:
             """Performs one forward pass, updates history, applies processors, and samples."""
             model_kwargs: dict[str, Any] = {"cache": self.prompt_cache.cache}
 

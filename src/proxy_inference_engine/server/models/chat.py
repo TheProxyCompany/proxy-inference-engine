@@ -51,12 +51,18 @@ class ChatCompletionToolChoice(BaseModel):
     type: Literal["function"] = "function"
     function: FunctionName = Field(description="The function to call.")
 
+    def to_dict(self):
+        return {"type": "function", "name": self.function.name}
+
 class ChatCompletionToolUseMode(Enum):
     """Controls which (if any) tool is called by the model."""
 
     AUTO = "auto"
     REQUIRED = "required"
     NONE = "none"
+
+    def to_dict(self):
+        return self.value
 
 class ChatCompletionFunction(BaseModel):
     """Defines a function for the response request."""
@@ -80,6 +86,19 @@ class ChatCompletionTool(BaseModel):
     type: Literal["function"] = "function"
     function: ChatCompletionFunction = Field(description="The function to call.")
 
+    def to_dict(self) -> dict:
+        return {
+            "name": self.function.name,
+            "type": "object",
+            "description": self.function.description or self.function.name,
+            "properties": {
+                "name": {"const": self.function.name},
+                "arguments": self.function.parameters,
+            },
+            "strict": self.function.strict,
+            "required": ["name", "arguments"],
+        }
+
 
 class ChatCompletionJSONSchemaResponseFormat(BaseModel):
     """Defines the response format for the chat completion request."""
@@ -97,17 +116,25 @@ class ChatCompletionJSONSchemaResponseFormat(BaseModel):
             description="Whether to enforce strict validation of the JSON schema."
         )
         schema: dict = Field(description="The JSON schema for the response format.")
-        
+
         model_config = {"protected_namespaces": ()}
 
     type: Literal["json_schema"] = "json_schema"
     json_schema: JSONSchema = Field(description="The JSON schema for the response format.")
+
+    def to_dict(self):
+        return {
+            "type": "json_schema",
+            **self.json_schema.model_dump()
+        }
 
 class ChatCompletionTextResponseFormat(BaseModel):
     """Defines the response format for the chat completion request."""
 
     type: Literal["text"] = "text"
 
+    def to_dict(self):
+        return self.model_dump()
 
 class ChatCompletionRequest(BaseModel):
     """Defines the request schema for the chat completion endpoint."""

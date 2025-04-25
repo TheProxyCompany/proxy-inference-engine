@@ -20,6 +20,19 @@ class Function(BaseModel):
         description="A JSON schema object describing the parameters of the function."
     )
 
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "type": "object",
+            "description": self.description or self.name,
+            "properties": {
+                "name": {"const": self.name},
+                "arguments": self.parameters,
+            },
+            "strict": self.strict,
+            "required": ["name", "arguments"],
+        }
+
 class ToolUseMode(Enum):
     """Controls which (if any) tool is called by the model."""
 
@@ -27,8 +40,14 @@ class ToolUseMode(Enum):
     REQUIRED = "required"
     NONE = "none"
 
+    def to_dict(self):
+        return self.value
+
 class FunctionID(BaseModel):
     """Defines a function tool for the response request."""
 
     type: Literal["function"] = "function"
     name: str = Field(description="The name of the function to call.")
+
+    def to_dict(self):
+        return self.model_dump()
