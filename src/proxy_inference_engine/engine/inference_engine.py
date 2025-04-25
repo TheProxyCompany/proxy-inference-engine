@@ -32,6 +32,8 @@ class InferenceEngine:
             multi_token_sampling=True
         )
         self.root_state_machine = RootStateMachine()
+        self.samplers: dict[str, Callable[[mx.array], mx.array]] = {}
+        self.logits_processors: dict[str, list[Callable[[mx.array, mx.array], mx.array]]] = {}
         logger.info(f"Inference Engine initialized with model from {model_path}")
 
     async def __call__(
@@ -57,9 +59,24 @@ class InferenceEngine:
         self.prompt_cache.load_cached_prompt(encoded_prompt)
         logger.info(f"PROMPT:\n{self.tokenizer.decode(encoded_prompt)}")
 
-        self.root_state_machine.configure(**inference_kwargs)
+        state_machine_kwargs = {
+            "response_format": inference_kwargs.get("response_format"),
+            "tools": inference_kwargs.get("tools"),
+            "parallel_tool_calls": inference_kwargs.get("parallel_tool_calls"),
+            "tool_choice": inference_kwargs.get("tool_choice"),
+        }
+        self.root_state_machine.configure(**state_machine_kwargs)
         self.structuring_engine.reset()
         self.structuring_engine.configure(self.root_state_machine)
+
+        for state_id, state in self.root_state_machine.available_states.items():
+            state_kwargs = state.generation_kwargs or inference_kwargs
+            self.samplers[state_id] = self.make_sampler(**state_kwargs)
+            self.logits_processors[state_id] = self.make_logits_processors(**state_kwargs)
+
+        self.samplers["root"] = self.make_sampler(**inference_kwargs)
+        self.logits_processors["root"] = self.make_logits_processors(**inference_kwargs)
+        logger.info(f"Loaded {len(self.samplers)} samplers and {len(self.logits_processors)} logits processors")
 
         generated_ids, finish_reason = await self.generate(encoded_prompt, **inference_kwargs)
         logger.info(f"\nGENERATED:\n{self.tokenizer.decode(generated_ids)}\n\n")
@@ -101,18 +118,12 @@ class InferenceEngine:
         Args:
             prompt_token_ids (mx.array): The input prompt for completion.
         """
-        sampler = self.make_sampler(**inference_kwargs)
-        logits_processors = self.make_logits_processors(**inference_kwargs)
         max_completion_tokens = int(inference_kwargs.get("max_completion_tokens", -1))
 
         result: list[int] = []
         stop_reason: str = "finish"
 
-        for token_id, _ in self.generate_step(
-            prompt_ids,
-            sampler=sampler,
-            logits_processors=logits_processors,
-        ):
+        for token_id, _ in self.generate_step(prompt_ids):
             tokens = token_id.tolist()
             assert isinstance(tokens, list)
             for token_id in tokens:
@@ -137,8 +148,6 @@ class InferenceEngine:
         prompt_ids: mx.array,
         pixel_values: mx.array | None = None,
         mask: mx.array | None = None,
-        sampler: Callable[[mx.array], mx.array] = (lambda x: mx.argmax(x, axis=-1)),
-        logits_processors: list[Callable[[mx.array, mx.array], mx.array]] | None = None,
     ) -> Iterator[tuple[mx.array, mx.array]]:
         """
         Generates tokens autoregressively, yielding one token and its log probabilities per step.
@@ -167,7 +176,8 @@ class InferenceEngine:
 
             # Apply any configured logits processors sequentially
             current_token_history = self.prompt_cache.computed_ids
-            for processor in logits_processors or []:
+            engine_state = self.structuring_engine.get_current_state() or "root"
+            for processor in self.logits_processors[engine_state] or []:
                 processed_logits = processor(current_token_history, processed_logits)
 
             # Calculate log probabilities (log-softmax normalization)
@@ -175,7 +185,7 @@ class InferenceEngine:
                 processed_logits, axis=-1, keepdims=True
             )
             # Sample the next token ID using the provided sampler function
-            next_token_id = sampler(logprobs)
+            next_token_id = self.samplers[engine_state](logprobs)
             return next_token_id, logprobs.squeeze(0)
 
         if len(self.prompt_cache.cache) == 0:
@@ -203,17 +213,18 @@ class InferenceEngine:
             if step_count % 256 == 0:
                 mx.clear_cache()
 
+
     def make_sampler(self, **kwargs) -> Callable[[mx.array], mx.array]:
         """
         Return a sampler function.
         If structured is True, use the structured sampler.
         Otherwise, use the simple sampler.
         """
-        temp = float(kwargs.get("temp", 1.0))
-        min_p = float(kwargs.get("min_p", 0.02))
-        min_tokens_to_keep = int(kwargs.get("min_tokens_to_keep", 1))
-        top_p = float(kwargs.get("top_p", 1.0))
-        top_k = int(kwargs.get("top_k", -1))
+        temp = kwargs.get("temp", 1.0)
+        top_p = kwargs.get("top_p", 1.0)
+        top_k = kwargs.get("top_k", -1)
+        min_p = kwargs.get("min_p", 0.0)
+        min_tokens_to_keep = kwargs.get("min_tokens_to_keep", 1)
         sampler = make_sampler(
             temp=temp,
             min_p=min_p,
@@ -221,20 +232,14 @@ class InferenceEngine:
             top_p=top_p,
             top_k=top_k,
         )
-        if kwargs.get("structured", False) or kwargs.get("json_schema", None):
-            return lambda x: self.structuring_engine.sample(x, sampler)
-        else:
-            return sampler
+        return lambda x: self.structuring_engine.sample(x, sampler)
 
-    def make_logits_processors(
-        self, **kwargs
-    ) -> list[Callable[[mx.array, mx.array], mx.array]]:
+    def make_logits_processors(self, **kwargs) -> list[Callable[[mx.array, mx.array], mx.array]]:
         """
         Return a list of logits processor functions.
         """
         logits_processors = []
-        if kwargs.get("structured", False) or kwargs.get("json_schema", None):
-            logits_processors.append(self.structuring_engine.process_logits)
+        logits_processors.append(self.structuring_engine.process_logits)
 
         if kwargs.get("repetition_penalty", 1.0) != 1.0:
             repetition_penalty = float(kwargs.get("repetition_penalty", 1.0))

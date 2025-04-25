@@ -39,13 +39,21 @@ class ToolCallState(SubState):
         self.tool_choice = tool_choice
         self.parallel_tool_calls = parallel_tool_calls
 
-        if tool_choice is None or (isinstance(tool_choice, str) and tool_choice != "none"):
+        if tool_choice is None or (
+            isinstance(tool_choice, str) and tool_choice != "none"
+        ):
             self.tools = tools
         elif isinstance(tool_choice, dict) and "name" in tool_choice:
             requested_function_name = tool_choice["name"]
-            self.tools = [tool for tool in tools if tool["name"] == requested_function_name]
+            self.tools = [
+                tool for tool in tools if tool["name"] == requested_function_name
+            ]
         else:
             self.tools = []
+
+    @property
+    def generation_kwargs(self) -> dict[str, Any]:
+        return {"temperature": 0.0, "repetition_penalty": 1.0, "min_p": 0.02}
 
     @property
     def state_machine(self) -> StateMachine:

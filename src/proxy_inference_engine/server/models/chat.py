@@ -115,9 +115,7 @@ class ChatCompletionJSONSchemaResponseFormat(BaseModel):
             default=None,
             description="Whether to enforce strict validation of the JSON schema."
         )
-        schema: dict = Field(description="The JSON schema for the response format.")
-
-        model_config = {"protected_namespaces": ()}
+        json_schema: dict = Field(description="The JSON schema for the response format.", alias="schema")
 
     type: Literal["json_schema"] = "json_schema"
     json_schema: JSONSchema = Field(description="The JSON schema for the response format.")

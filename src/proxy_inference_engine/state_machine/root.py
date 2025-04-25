@@ -28,7 +28,7 @@ class RootStateMachine(StateMachine):
 
     def configure(
         self,
-        response_format: dict[str, Any],
+        response_format: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_delimiters: tuple[str, str] | None = None,
         parallel_tool_calls: bool | None = None,

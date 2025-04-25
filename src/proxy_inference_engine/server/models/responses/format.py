@@ -22,7 +22,7 @@ class JSONSchemaResponseFormat(BaseModel):
     """Defines the JSON schema for the response format."""
 
     type: Literal["json_schema"] = "json_schema"
-    schema: dict = Field(description="The JSON schema to use.")
+    json_schema: dict = Field(description="The JSON schema to use.", alias="schema")
     name: str = Field(description="The name of the JSON schema.")
     description: str | None = Field(
         default="",
@@ -32,7 +32,3 @@ class JSONSchemaResponseFormat(BaseModel):
         default=False,
         description="Whether to enforce strict validation of the JSON schema.",
     )
-
-    model_config = {
-        "protected_namespaces": ()
-    }
