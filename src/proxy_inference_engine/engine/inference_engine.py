@@ -93,17 +93,27 @@ class InferenceEngine:
         content = []
 
         for state_id, output in self.structuring_engine.get_stateful_structured_output():
+            breakpoint()
             if (engine_state := self.root_state_machine.available_states.get(state_id)) is None:
                 logger.warning(f"Unknown state: {state_id}")
                 continue
 
-            logger.debug(f"STATE: {engine_state.identifier}")
-            logger.debug(f"OUTPUT: {output}")
+            logger.info(f"STATE: {engine_state.identifier}")
+            logger.info(f"OUTPUT: {output}")
 
             match engine_state.identifier:
                 case "structured_output" | "freeform_text":
                     content.append(Content.text(output))
+                    if engine_state.identifier == "structured_output":
+                        metadata["finish_reason"] = "stop"
                 case "tool_call":
+                    if not isinstance(output, dict):
+                        logger.warning(f"Tool call output is not a dictionary: {output}")
+                        continue
+                    if "name" not in output or "arguments" not in output:
+                        logger.warning(f"Tool call output is missing name or arguments: {output}")
+                        continue
+
                     content.append(Content.tool_call(output["name"], output["arguments"]))
                 case _:
                     logger.warning(f"Unknown state: {engine_state.identifier}")
@@ -184,6 +194,7 @@ class InferenceEngine:
             # Apply any configured logits processors sequentially
             current_token_history = self.prompt_cache.computed_ids
             engine_state = self.structuring_engine.get_current_state() or "root"
+
             for processor in self.logits_processors[engine_state] or []:
                 processed_logits = processor(current_token_history, processed_logits)
 

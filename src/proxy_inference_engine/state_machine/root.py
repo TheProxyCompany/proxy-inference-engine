@@ -23,7 +23,6 @@ class RootStateMachine(StateMachine):
             self._create_state_graph(),
             start_state="start",
             end_states=["end"],
-            identifier="root",
         )
 
     def configure(
