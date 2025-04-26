@@ -28,12 +28,15 @@ class InferenceEngine:
         self.model, self.tokenizer_config = llm.model, llm.tokenizer_config
         self.tokenizer = Tokenizer(llm.hf_tokenizer, self.tokenizer_config)
         self.prompt_cache = PromptCache()
+        self.root_state_machine = RootStateMachine(
+            control_tokens=self.tokenizer.control_tokens
+        )
         self.structuring_engine = StructuringEngine(
             llm.hf_tokenizer,
             whitelist_control_tokens=self.tokenizer.control_tokens.end_tokens(),
             multi_token_sampling=True,
         )
-        self.root_state_machine = RootStateMachine()
+
         self.samplers: dict[str, Callable[[mx.array], mx.array]] = {}
         self.logits_processors: dict[str, list[Callable[[mx.array, mx.array], mx.array]]] = {}
         logger.info(f"Inference Engine initialized with model from {model_path}")
@@ -108,7 +111,6 @@ class InferenceEngine:
                 case "tool_call":
                     if not isinstance(output, dict):
                         logger.warning(f"Tool call output is not a dictionary: {output}")
-                        breakpoint()
                         continue
                     if "name" not in output or "arguments" not in output:
                         logger.warning(f"Tool call output is missing name or arguments: {output}")

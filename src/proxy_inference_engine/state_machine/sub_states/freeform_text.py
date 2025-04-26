@@ -1,5 +1,4 @@
-from pse.types.base.character import CharacterStateMachine
-from pse_core import StateGraph
+from pse.types.misc.freeform import FreeformStateMachine
 from pse_core.state_machine import StateMachine
 
 from proxy_inference_engine.state_machine.sub_state import SubState
@@ -10,15 +9,21 @@ class FreeformTextState(SubState):
     State for freeform text.
     """
 
-    def __init__(self, secondary_state_machine: StateMachine | None = None):
+    def __init__(
+        self,
+        end_delimiters: list[str],
+        min_characters: int | None = None,
+    ):
         """
         Initialize a new FreeformTextState.
 
         Args:
-            delimiters: delimiters for the freeform text state
+            end_delimiters: delimiters for the freeform text state
+            min_characters: minimum number of characters to generate
         """
         super().__init__(identifier="text_output")
-        self.secondary_state_machine = secondary_state_machine
+        self.end_delimiters = end_delimiters
+        self.min_characters = min_characters
 
     @property
     def state_machine(self) -> StateMachine:
@@ -28,25 +33,7 @@ class FreeformTextState(SubState):
         Returns:
             A StateMachine instance configured for freeform reasoning
         """
-        return CharacterStateMachine()
-
-class FreeformTextStateMachine(StateMachine):
-    """
-    State for freeform text.
-    """
-
-    def __init__(self, secondary_state_machine: StateMachine | None = None):
-        text_output_sm = CharacterStateMachine()
-        text_output_sm.identifier = "text_output"
-        state_graph: StateGraph = {
-            "start": [(text_output_sm, "end")],
-        }
-        if secondary_state_machine:
-            state_graph["end"] = [(secondary_state_machine, "super_end")]
-
-        super().__init__(
-            state_graph,
-            start_state="start",
-            end_states=["end", "super_end"],
-            identifier="freeform_text_with_wait_for",
+        return FreeformStateMachine(
+            end_delimiters=self.end_delimiters or [],
+            char_min=self.min_characters,
         )

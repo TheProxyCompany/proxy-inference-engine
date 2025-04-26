@@ -10,15 +10,17 @@ from proxy_inference_engine.state_machine.sub_states import (
     StructuredOutputState,
     ToolCallState,
 )
+from proxy_inference_engine.tokenizer.control_tokens import ControlTokens
 
 
 class RootStateMachine(StateMachine):
     """The root state machine for the proxy inference engine."""
 
-    def __init__(self):
+    def __init__(self, control_tokens: ControlTokens):
         """
         Initialize the root state machine.
         """
+        self.control_tokens = control_tokens
         super().__init__(
             self._create_state_graph(),
             start_state="start",
@@ -78,7 +80,8 @@ class RootStateMachine(StateMachine):
             self.available_states[tool_call_state.identifier] = tool_call_state
 
         if response_format.get("type") == "text" and tool_choice != "required":
-            freeform_text = FreeformTextState()
+            end_tokens = self.control_tokens.end_tokens()
+            freeform_text = FreeformTextState(end_delimiters=end_tokens)
             self.available_states[freeform_text.identifier] = freeform_text
 
         states = [state.state_machine for state in self.available_states.values()]
@@ -102,4 +105,7 @@ class RootStepper(Stepper):
 
     def get_final_state(self) -> list[Stepper]:
         """Get the final state of the stepper."""
-        return self.history
+        if self.history:
+            return self.history
+        else:
+            return super().get_final_state()
