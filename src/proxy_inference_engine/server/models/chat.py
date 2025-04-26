@@ -18,10 +18,15 @@ from proxy_inference_engine.interaction import (
 # --- Constants ---
 CHAT_COMPLETION_ID_PREFIX = "chatcmpl-"
 CHAT_COMPLETION_OBJECT = "chat.completion"
-
+TOOL_CALL_ID_PREFIX = "call-"
 
 def generate_chat_completion_id(prefix: str = CHAT_COMPLETION_ID_PREFIX) -> str:
     """Generates a unique identifier string for a completion response."""
+    random_part = secrets.token_urlsafe(22)
+    return f"{prefix}{random_part}"
+
+def generate_tool_call_id(prefix: str = TOOL_CALL_ID_PREFIX) -> str:
+    """Generates a unique identifier string for a tool call."""
     random_part = secrets.token_urlsafe(22)
     return f"{prefix}{random_part}"
 
@@ -35,7 +40,7 @@ class ChatMessage(BaseModel):
     """Represents a single message within the chat conversation."""
 
     role: str = Field(description="The role of the messages author.")
-    content: str = Field(description="The contents of the message.")
+    content: str | None = Field(description="The contents of the message.")
     tool_calls: list[ChatCompletionToolUsage] = Field(
         default=[],
         description="The tool calls that were made in the message.",
@@ -43,14 +48,27 @@ class ChatMessage(BaseModel):
 
     def to_interaction(self) -> Interaction:
         role = InteractionRole(self.role)
+        content = []
+        if self.content:
+            content.append(Content.text(self.content))
+
+        if self.tool_calls:
+            for tool_call in self.tool_calls:
+                name = tool_call.function.name
+                arguments = json.loads(tool_call.function.arguments)
+                content.append(Content.tool_call(name, arguments))
+
         return Interaction(
             role,
-            [Content.text(self.content)],
+            content,
         )
 
     @staticmethod
     def from_interaction(interaction: Interaction) -> ChatMessage:
         role = interaction.role.value
+        if role == "agent":
+            role = "assistant"
+
         content = ""
         tool_calls = []
         for item in interaction.content:
@@ -74,7 +92,7 @@ class ChatCompletionToolUsage(BaseModel):
     function: UsedFunction = Field(description="The function that was used.")
 
     @staticmethod
-    def from_content(content: Content) -> ChatCompletionToolUsage:
+    def from_content(content: Content, tool_call_id: str | None = None) -> ChatCompletionToolUsage:
         if content.type != InteractionType.TOOL_CALL:
             raise ValueError("Content is not a tool call.")
 
@@ -92,7 +110,7 @@ class ChatCompletionToolUsage(BaseModel):
         )
 
         return ChatCompletionToolUsage(
-            id=content.id,
+            id=tool_call_id or generate_tool_call_id(),
             function=used_function,
         )
 
