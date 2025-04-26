@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from enum import Enum
@@ -77,9 +78,17 @@ class ChatCompletionToolUsage(BaseModel):
         if content.type != InteractionType.TOOL_CALL:
             raise ValueError("Content is not a tool call.")
 
+        if not isinstance(content.content, dict):
+            raise ValueError("tool call content is not a dictionary.")
+
+        function_name = content.content["name"]
+        function_arguments = content.content["arguments"]
+        if isinstance(function_arguments, dict):
+            function_arguments = json.dumps(function_arguments)
+
         used_function = ChatCompletionToolUsage.UsedFunction(
-            name=content.content["name"],
-            arguments=content.content["arguments"],
+            name=function_name,
+            arguments=function_arguments,
         )
 
         return ChatCompletionToolUsage(
