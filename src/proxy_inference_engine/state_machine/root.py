@@ -6,8 +6,8 @@ from pse_core import StateGraph, StateId
 
 from proxy_inference_engine.state_machine.sub_state import SubState
 from proxy_inference_engine.state_machine.sub_states import (
-    FreeformTextState,
     StructuredOutputState,
+    TextState,
     ToolCallState,
 )
 from proxy_inference_engine.tokenizer.control_tokens import ControlTokens
@@ -81,7 +81,7 @@ class RootStateMachine(StateMachine):
 
         if response_format.get("type") == "text" and tool_choice != "required":
             end_tokens = self.control_tokens.end_tokens()
-            freeform_text = FreeformTextState(end_delimiters=end_tokens)
+            freeform_text = TextState(end_delimiters=end_tokens)
             self.available_states[freeform_text.identifier] = freeform_text
 
         states = [state.state_machine for state in self.available_states.values()]

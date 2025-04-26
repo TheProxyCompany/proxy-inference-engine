@@ -82,6 +82,13 @@ class Tokenizer:
         return self._control_tokens
 
     @property
+    def whitelist_control_tokens(self) -> list[str]:
+        """
+        Get the whitelist control tokens.
+        """
+        return self.control_tokens.get_whitelist_control_tokens()
+
+    @property
     def stop_tokens(self) -> set[int]:
         """Get the set of token IDs that indicate stopping generation.
 

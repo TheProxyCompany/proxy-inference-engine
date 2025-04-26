@@ -32,6 +32,13 @@ class ControlTokens(BaseModel):
 
     roles: RoleTags
 
+    @property
+    def delimiters(self) -> dict[str, tuple[str, str]]:
+        """Returns the delimiters for the control tokens."""
+        return {
+            "end_tokens": (self.end_of_sequence, self.end_of_message),
+        }
+
     def end_tokens(self) -> list[str]:
         """Returns a list of tokens that indicate the end of a sequence.
 
@@ -39,6 +46,23 @@ class ControlTokens(BaseModel):
             A list of end tokens.
         """
         return [self.end_of_sequence, self.end_of_message]
+
+    def get_whitelist_control_tokens(self) -> list[str]:
+        """Returns the control tokens used for tokenization.
+
+        Returns:
+            A list of the most essential control tokens.
+        """
+        tokens: list[str] = []
+        for delim in self.delimiters.values():
+            if delim:
+                start, end = delim
+                if start.strip():
+                    tokens.append(start.strip())
+                if end.strip():
+                    tokens.append(end.strip())
+
+        return list(set(tokens))
 
 def get_control_tokens(tokenizer_config: dict) -> ControlTokens:
     """Get the control tokens for the model."""

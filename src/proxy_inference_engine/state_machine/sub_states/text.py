@@ -4,7 +4,7 @@ from pse_core.state_machine import StateMachine
 from proxy_inference_engine.state_machine.sub_state import SubState
 
 
-class FreeformTextState(SubState):
+class TextState(SubState):
     """
     State for freeform text.
     """
@@ -33,7 +33,9 @@ class FreeformTextState(SubState):
         Returns:
             A StateMachine instance configured for freeform reasoning
         """
-        return FreeformStateMachine(
-            end_delimiters=self.end_delimiters or [],
+        state_machine = FreeformStateMachine(
+            end_delimiters=self.end_delimiters,
             char_min=self.min_characters,
         )
+        state_machine.identifier = self.identifier
+        return state_machine

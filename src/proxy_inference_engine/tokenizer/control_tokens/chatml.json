@@ -1,8 +1,8 @@
 {
     "template_type": "chatml",
     "begin_of_text": "",
-    "end_of_sequence": "<|im_end|>\n",
-    "end_of_message": "<|im_end|>\n",
+    "end_of_sequence": "<|im_end|>",
+    "end_of_message": "<|im_end|>",
     "roles": {
         "system": {
             "role_name": "system",

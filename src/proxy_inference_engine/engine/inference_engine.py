@@ -28,12 +28,10 @@ class InferenceEngine:
         self.model, self.tokenizer_config = llm.model, llm.tokenizer_config
         self.tokenizer = Tokenizer(llm.hf_tokenizer, self.tokenizer_config)
         self.prompt_cache = PromptCache()
-        self.root_state_machine = RootStateMachine(
-            control_tokens=self.tokenizer.control_tokens
-        )
+        self.root_state_machine = RootStateMachine(self.tokenizer.control_tokens)
         self.structuring_engine = StructuringEngine(
             llm.hf_tokenizer,
-            whitelist_control_tokens=self.tokenizer.control_tokens.end_tokens(),
+            whitelist_control_tokens=self.tokenizer.whitelist_control_tokens,
             multi_token_sampling=True,
         )
 
@@ -104,7 +102,7 @@ class InferenceEngine:
             logger.info(f"OUTPUT: {output}")
 
             match engine_state.identifier:
-                case "structured_output" | "freeform_text":
+                case "structured_output" | "text_output":
                     content.append(Content.text(output))
                     if engine_state.identifier == "structured_output":
                         metadata["finish_reason"] = "stop"
@@ -196,7 +194,6 @@ class InferenceEngine:
             # Apply any configured logits processors sequentially
             current_token_history = self.prompt_cache.computed_ids
             engine_state = self.structuring_engine.get_current_state() or "root"
-
             for processor in self.logits_processors[engine_state] or []:
                 processed_logits = processor(current_token_history, processed_logits)
 
