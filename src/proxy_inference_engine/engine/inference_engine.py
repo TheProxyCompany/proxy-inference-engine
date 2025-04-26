@@ -93,7 +93,6 @@ class InferenceEngine:
         content = []
 
         for state_id, output in self.structuring_engine.get_stateful_structured_output():
-            breakpoint()
             if (engine_state := self.root_state_machine.available_states.get(state_id)) is None:
                 logger.warning(f"Unknown state: {state_id}")
                 continue

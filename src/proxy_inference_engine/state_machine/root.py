@@ -1,8 +1,8 @@
 from typing import Any
 
-from pse.structuring_engine import StateMachine
+from pse.structuring_engine import StateMachine, Stepper
 from pse.types.base.any import AnyStateMachine
-from pse_core import StateGraph
+from pse_core import StateGraph, StateId
 
 from proxy_inference_engine.state_machine.sub_state import SubState
 from proxy_inference_engine.state_machine.sub_states import (
@@ -23,7 +23,12 @@ class RootStateMachine(StateMachine):
             self._create_state_graph(),
             start_state="start",
             end_states=["end"],
+            identifier="root",
         )
+
+    def get_new_stepper(self, _: StateId) -> Stepper:
+        """Get a new stepper for the root state machine."""
+        return RootStepper(self)
 
     def configure(
         self,
@@ -84,3 +89,17 @@ class RootStateMachine(StateMachine):
         )
 
         return { "start": [(root_state_machine, "end")] }
+
+class RootStepper(Stepper):
+    """The stepper for the root state machine."""
+
+    def __init__(self, state_machine: RootStateMachine):
+        """
+        Initialize the root stepper.
+        """
+        super().__init__(state_machine)
+        self.state_machine: RootStateMachine = state_machine
+
+    def get_final_state(self) -> list[Stepper]:
+        """Get the final state of the stepper."""
+        return self.history
