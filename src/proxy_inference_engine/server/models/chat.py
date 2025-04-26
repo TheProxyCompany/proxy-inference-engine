@@ -69,8 +69,8 @@ class ChatMessage(BaseModel):
         if role == "agent":
             role = "assistant"
 
-        content = ""
-        tool_calls = []
+        content: str | None = None
+        tool_calls: list[ChatCompletionToolUsage] = []
         for item in interaction.content:
             if item.type == InteractionType.TEXT:
                 content = item.content
