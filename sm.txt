@@ -1,0 +1,820 @@
+src/proxy_inference_engine/sdk/__init__.py
+---
+from proxy_inference_engine.sdk.client import InferenceEngineClient
+from proxy_inference_engine.sdk.types import GenerationRequest
+
+__all__ = ["GenerationRequest", "InferenceEngineClient"]
+
+
+---
+src/proxy_inference_engine/sdk/client.py
+---
+from proxy_inference_engine.engine.inference_engine import InferenceEngine
+from proxy_inference_engine.interaction.interaction import Interaction
+from proxy_inference_engine.sdk.types import GenerationRequest
+
+
+class InferenceEngineClient:
+    """
+    A client for the proxy inference engine.
+    """
+
+    def __init__(self, model_path: str):
+        """
+        Initialize the inference engine client.
+        """
+        self.model_path = model_path
+        self.engine = InferenceEngine(model_path)
+
+    async def generate(self, request: GenerationRequest) -> Interaction:
+        """
+        Generate a chat completion.
+        """
+        engine_request = request.to_interactions()
+        engine_result = await self.engine(
+            engine_request,
+            **(request.generation_kwargs or {}),
+        )
+        return engine_result
+
+
+---
+src/proxy_inference_engine/sdk/types.py
+---
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel
+
+from proxy_inference_engine.interaction import Interaction, InteractionRole
+
+
+class GenerationRequest(BaseModel):
+    """
+    A request for a generation.
+    """
+
+    prompt: str | list[dict[str, str]] | Interaction | list[Interaction]
+    response_format: dict[str, Any] | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_delimiters: tuple[str, str] | None = None
+    parallel_tool_calls: bool | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    generation_kwargs: dict[str, GenerationKwargs] | None = None
+
+    def to_interactions(self) -> list[Interaction]:
+        """
+        Convert the generation request to an interaction.
+        """
+        if isinstance(self.prompt, str):
+            return [Interaction.simple(InteractionRole.USER, self.prompt)]
+        elif isinstance(self.prompt, Interaction):
+            return [self.prompt]
+        elif isinstance(self.prompt, list):
+            result: list[Interaction] = []
+            for p in self.prompt:
+                if isinstance(p, dict):
+                    role = p.get("role", "user")
+                    content = p.get("content", "")
+                    try:
+                        interaction_role = InteractionRole(role)
+                        result.append(Interaction.simple(interaction_role, content))
+                    except ValueError:
+                        result.append(Interaction.simple(InteractionRole.USER, content))
+                elif isinstance(p, Interaction):
+                    result.append(p)
+
+            return result
+        else:
+            raise ValueError("Invalid prompt type")
+
+class GenerationKwargs(BaseModel):
+    """
+    Generation kwargs.
+    """
+
+    min_p: float | None = None
+    max_p: float | None = None
+    min_tokens_to_keep: int | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    temperature: float | None = None
+    repetition_penalty: float | None = None
+
+
+---
+src/proxy_inference_engine/state_machine/__init__.py
+---
+from proxy_inference_engine.state_machine.root import RootStateMachine
+
+__all__ = ["RootStateMachine"]
+
+
+---
+src/proxy_inference_engine/state_machine/root.py
+---
+from typing import Any
+
+from pse.types.base.any import AnyStateMachine
+from pse_core import StateGraph, StateId
+from pse_core.state_machine import StateMachine
+from pse_core.stepper import Stepper
+
+from proxy_inference_engine.state_machine.sub_state import SubState
+from proxy_inference_engine.state_machine.sub_states import (
+    StructuredOutputState,
+    TextOutputState,
+    ToolCallState,
+)
+from proxy_inference_engine.tokenizer.control_tokens import ControlTokens
+
+
+class RootStateMachine(StateMachine):
+    """The root state machine for the proxy inference engine."""
+
+    def __init__(self, control_tokens: ControlTokens):
+        """
+        Initialize the root state machine.
+        """
+        self.control_tokens = control_tokens
+        super().__init__(
+            self._create_state_graph(),
+            start_state="start",
+            end_states=["end"],
+            identifier="root",
+        )
+
+    def get_new_stepper(self, _: StateId) -> Stepper:
+        """Get a new stepper for the root state machine."""
+        return RootStepper(self)
+
+    def configure(
+        self,
+        response_format: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_delimiters: tuple[str, str] | None = None,
+        parallel_tool_calls: bool | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        generation_kwargs: dict[str, Any] | None = None,
+    ):
+        """
+        Configure the root state machine.
+        """
+        self.state_graph = self._create_state_graph(
+            response_format,
+            tools,
+            tool_delimiters,
+            parallel_tool_calls,
+            tool_choice,
+            generation_kwargs,
+        )
+
+    def _create_state_graph(
+        self,
+        response_format: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_delimiters: tuple[str, str] | None = None,
+        parallel_tool_calls: bool | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        generation_kwargs: dict[str, Any] | None = None,
+    ) -> StateGraph:
+        """
+        Create and configure all states for the root state machine.
+        """
+        self.available_states: dict[str, SubState] = {}
+        response_format = response_format or {"type": "text"}
+
+        if response_format.get("type") == "json_schema":
+            structured_output_state = StructuredOutputState(
+                response_format,
+                delimiters=None,
+                generation_kwargs=generation_kwargs,
+            )
+            self.available_states[structured_output_state.identifier] = (
+                structured_output_state
+            )
+        elif response_format.get("type") == "json_object":
+            json_object_state = StructuredOutputState(
+                {},
+                generation_kwargs=generation_kwargs,
+            )
+            self.available_states[json_object_state.identifier] = json_object_state
+        elif tools and tool_choice != "none":
+            tool_call_state = ToolCallState(
+                tools,
+                tool_delimiters,
+                tool_choice,
+                parallel_tool_calls,
+                generation_kwargs=generation_kwargs,
+            )
+            self.available_states[tool_call_state.identifier] = tool_call_state
+
+        if response_format.get("type") == "text" and tool_choice != "required":
+            end_tokens = self.control_tokens.end_tokens()
+            freeform_text = TextOutputState(
+                end_delimiters=end_tokens,
+                generation_kwargs=generation_kwargs,
+            )
+            self.available_states[freeform_text.identifier] = freeform_text
+
+        states = [state.state_machine for state in self.available_states.values()]
+        root_state_machine: StateMachine = (
+            AnyStateMachine(states) if len(states) > 1 else states[0]
+        )
+
+        return {"start": [(root_state_machine, "end")]}
+
+
+class RootStepper(Stepper):
+    """The stepper for the root state machine."""
+
+    def __init__(self, state_machine: RootStateMachine):
+        """
+        Initialize the root stepper.
+        """
+        super().__init__(state_machine)
+        self.state_machine: RootStateMachine = state_machine
+
+    def get_final_state(self) -> list[Stepper]:
+        """Get the final state of the stepper."""
+        if self.history:
+            return self.history
+        else:
+            return super().get_final_state()
+
+
+---
+src/proxy_inference_engine/state_machine/sub_state.py
+---
+from abc import abstractmethod
+from typing import Any
+
+from pse_core.state_machine import StateMachine
+
+
+class SubState:
+    """
+    A sub state for the root state machine.
+    """
+
+    def __init__(self, identifier: str, generation_kwargs: dict[str, Any] | None = None):
+        self.identifier = identifier
+        self.specific_kwargs: dict[str, Any] = {}
+        if generation_kwargs and generation_kwargs.get(self.identifier, None):
+            self.specific_kwargs = generation_kwargs[self.identifier]
+
+
+    @property
+    def generation_kwargs(self) -> dict[str, Any]:
+        return self.specific_kwargs
+
+    @property
+    @abstractmethod
+    def state_machine(self) -> StateMachine:
+        pass
+
+
+---
+src/proxy_inference_engine/state_machine/sub_states/__init__.py
+---
+from proxy_inference_engine.state_machine.sub_states.reasoning import ReasoningState
+from proxy_inference_engine.state_machine.sub_states.structured_output import (
+    StructuredOutputState,
+)
+from proxy_inference_engine.state_machine.sub_states.text_output import TextOutputState
+from proxy_inference_engine.state_machine.sub_states.tool_call import ToolCallState
+
+__all__ = [
+    "ReasoningState",
+    "StructuredOutputState",
+    "TextOutputState",
+    "ToolCallState",
+]
+
+
+---
+src/proxy_inference_engine/state_machine/sub_states/reasoning.py
+---
+from typing import Any
+
+from pse.types.misc.fenced_freeform import FencedFreeformStateMachine
+from pse_core.state_machine import StateMachine
+
+from proxy_inference_engine.state_machine.sub_state import SubState
+
+
+class ReasoningState(SubState):
+    """
+    State for freeform reasoning.
+    """
+
+    def __init__(
+        self,
+        character_min: int | None = None,
+        character_max: int | None = None,
+        delimiters: tuple[str, str] | None = None,
+        generation_kwargs: dict[str, Any] | None = None,
+    ):
+        """
+        Initialize a new StructuredOutputState.
+
+        Args:
+            delimiters: delimiters for the freeform reasoning state
+        """
+        super().__init__(identifier="reasoning", generation_kwargs=generation_kwargs)
+        self.delimiters = delimiters or ("```thinking\n", "\n```")
+        self.character_min = character_min or 50
+        self.character_max = character_max or -1
+
+    @property
+    def state_machine(self) -> StateMachine:
+        """
+        Create a freeform state machine for reasoning.
+
+        Returns:
+            A StateMachine instance configured for freeform reasoning
+        """
+        return FencedFreeformStateMachine(
+            self.identifier,
+            self.delimiters,
+            char_min=self.character_min,
+            char_max=self.character_max,
+        )
+
+
+---
+src/proxy_inference_engine/state_machine/sub_states/structured_output.py
+---
+from typing import Any
+
+from pse.types.json import json_schema_state_machine
+from pse_core.state_machine import StateMachine
+
+from proxy_inference_engine.state_machine.sub_state import SubState
+
+
+class StructuredOutputState(SubState):
+    """
+    State for handling structured output during agent execution.
+    """
+
+    def __init__(
+        self,
+        json_schema: dict[str, Any],
+        delimiters: tuple[str, str] | None = ("```json\n", "\n```"),
+        generation_kwargs: dict[str, Any] | None = None,
+    ):
+        """
+        Initialize a new StructuredOutputState.
+
+        Args:
+            json_schema: JSON schema for the structured output
+            delimiters: Optional custom delimiters for the structured output state
+        """
+        super().__init__(identifier="structured_output", generation_kwargs=generation_kwargs)
+        self.delimiters = delimiters
+        self.json_schema = json_schema
+
+    @property
+    def state_machine(self) -> StateMachine:
+        """
+        Create a JSON schema-based state machine for structured output.
+
+        This property dynamically generates a state machine that validates structured
+        output against their JSON schemas, ensuring all required parameters are provided
+        and correctly formatted.
+
+        Returns:
+            A StateMachine instance configured for structured output validation
+        """
+        _, state_machine = json_schema_state_machine(
+            self.json_schema,
+            self.delimiters
+        )
+        state_machine.identifier = self.identifier
+        return state_machine
+
+
+---
+src/proxy_inference_engine/state_machine/sub_states/text_output.py
+---
+from typing import Any
+
+from pse.types.misc.freeform import FreeformStateMachine
+from pse_core.state_machine import StateMachine
+
+from proxy_inference_engine.state_machine.sub_state import SubState
+
+
+class TextOutputState(SubState):
+    """
+    State for freeform text.
+    """
+
+    def __init__(
+        self,
+        end_delimiters: list[str],
+        min_characters: int | None = None,
+        generation_kwargs: dict[str, Any] | None = None,
+    ):
+        """
+        Initialize a new FreeformTextState.
+
+        Args:
+            end_delimiters: delimiters for the freeform text state
+            min_characters: minimum number of characters to generate
+        """
+        super().__init__(identifier="text_output", generation_kwargs=generation_kwargs)
+        self.end_delimiters = end_delimiters
+        self.min_characters = min_characters
+
+    @property
+    def state_machine(self) -> StateMachine:
+        """
+        Create a freeform state machine for reasoning.
+
+        Returns:
+            A StateMachine instance configured for freeform reasoning
+        """
+        state_machine = FreeformStateMachine(
+            end_delimiters=self.end_delimiters,
+            char_min=self.min_characters,
+        )
+        state_machine.identifier = self.identifier
+        return state_machine
+
+
+---
+src/proxy_inference_engine/state_machine/sub_states/tool_call.py
+---
+from typing import Any
+
+from pse.types.json import json_schema_state_machine
+from pse_core.state_machine import StateMachine
+
+from proxy_inference_engine.state_machine.sub_state import SubState
+
+
+class ToolCallState(SubState):
+    """
+    State for handling tool calls during agent execution.
+
+    The ToolCallState enables agents to interact with their environment by providing
+    a structured interface for invoking external tools. It creates a JSON schema-based
+    state machine that ensures tool calls have the correct format, required parameters,
+    and follow the expected structure.
+
+    This state is a key component of the agent's ability to take action in the world,
+    allowing it to perform operations like web searches, calculations, or API calls.
+    """
+
+    def __init__(
+        self,
+        tools: list[dict[str, Any]],
+        delimiters: tuple[str, str] | None = ("```tool\n", "\n```"),
+        tool_choice: str | dict[str, Any] | None = None,
+        parallel_tool_calls: bool | None = None,
+        generation_kwargs: dict[str, Any] | None = None,
+    ):
+        """
+        Initialize a new ToolCallState.
+
+        Args:
+            tools: List of Tool objects available for use in this state
+            delimiters: Optional custom delimiters for the tool call state
+            list_delimiters: Optional delimiters for the tool list in the prompt
+        """
+        super().__init__(identifier="tool_call", generation_kwargs=generation_kwargs)
+        self.delimiters = delimiters
+        self.tool_choice = tool_choice
+        self.parallel_tool_calls = parallel_tool_calls
+
+        if tool_choice is None or (
+            isinstance(tool_choice, str) and tool_choice != "none"
+        ):
+            self.tools = tools
+        elif isinstance(tool_choice, dict) and "name" in tool_choice:
+            requested_function_name = tool_choice["name"]
+            self.tools = [
+                tool for tool in tools if tool["name"] == requested_function_name
+            ]
+        else:
+            self.tools = []
+
+    @property
+    def generation_kwargs(self) -> dict[str, Any]:
+        return {
+            "temperature": 0.0,
+            "repetition_penalty": 1.0,
+            "min_p": 0.02
+        }
+
+    @property
+    def state_machine(self) -> StateMachine:
+        """
+        Create a JSON schema-based state machine for tool calls.
+
+        This property dynamically generates a state machine that validates tool calls
+        against their JSON schemas, ensuring all required parameters are provided and
+        correctly formatted.
+
+        Returns:
+            A StateMachine instance configured for tool invocation validation
+        """
+        if self.parallel_tool_calls:
+            schema = {"type": "array", "items": {"oneOf": self.tools}}
+        else:
+            schema = self.tools
+
+        _, state_machine = json_schema_state_machine(schema, self.delimiters)
+        state_machine.identifier = self.identifier
+        return state_machine
+
+
+---
+src/proxy_inference_engine/engine/__init__.py
+---
+from proxy_inference_engine.engine.inference_engine import InferenceEngine
+
+__all__ = ["InferenceEngine"]
+
+
+---
+src/proxy_inference_engine/engine/inference_engine.py
+---
+import json
+import logging
+from collections.abc import Callable, Iterator
+from typing import Any
+
+import mlx.core as mx
+from pse.structuring_engine import StructuringEngine
+
+from proxy_inference_engine.cache import PromptCache
+from proxy_inference_engine.interaction import InteractionRole
+from proxy_inference_engine.interaction.content import Content
+from proxy_inference_engine.interaction.interaction import Interaction
+from proxy_inference_engine.logits_processors import repetition_penalty_logits_processor
+from proxy_inference_engine.models import load
+from proxy_inference_engine.samplers import make_sampler
+from proxy_inference_engine.state_machine import RootStateMachine
+from proxy_inference_engine.tokenizer import Tokenizer
+
+logger = logging.getLogger(__name__)
+
+
+class InferenceEngine:
+    """
+    A class for performing inference with a LLM.
+    """
+
+    def __init__(self, model_path: str):
+        llm = load(model_path)
+        self.model, self.tokenizer_config = llm.model, llm.tokenizer_config
+        self.tokenizer = Tokenizer(llm.hf_tokenizer, self.tokenizer_config)
+        self.prompt_cache = PromptCache()
+        self.root_state_machine = RootStateMachine(self.tokenizer.control_tokens)
+        self.structuring_engine = StructuringEngine(
+            llm.hf_tokenizer,
+            whitelist_control_tokens=self.tokenizer.whitelist_control_tokens,
+            multi_token_sampling=True,
+        )
+
+        self.samplers: dict[str, Callable[[mx.array], mx.array]] = {}
+        self.logits_processors: dict[str, list[Callable[[mx.array, mx.array], mx.array]]] = {}
+        logger.info(f"Inference Engine initialized with model from {model_path}")
+
+    async def __call__(self, prompt: list[Interaction], **inference_kwargs) -> Interaction:
+        """
+        Generate a completion for the given prompt.
+
+        Args:
+            prompt (list[Interaction]): The input prompt for completion.
+            **inference_kwargs: Additional keyword arguments to use for inference.
+        """
+        tokenizer_config = {
+            "prompt": prompt,
+            **inference_kwargs,
+            **self.tokenizer.control_tokens.model_dump(),
+        }
+        encoded_prompt = self.tokenizer.encode(**tokenizer_config)
+        prompt_length = encoded_prompt.size
+
+        self.prompt_cache.load_cached_prompt(encoded_prompt)
+        logger.info(f"\nPROMPT: {self.tokenizer.decode(encoded_prompt)}\n")
+
+        state_machine_kwargs = {
+            "response_format": inference_kwargs.get("response_format"),
+            "tools": inference_kwargs.get("tools"),
+            "parallel_tool_calls": inference_kwargs.get("parallel_tool_calls"),
+            "tool_choice": inference_kwargs.get("tool_choice"),
+            "generation_kwargs": inference_kwargs.get("generation_kwargs"),
+        }
+        self.root_state_machine.configure(**state_machine_kwargs)
+        self.structuring_engine.reset()
+        self.structuring_engine.configure(self.root_state_machine)
+
+        for state_id, state in self.root_state_machine.available_states.items():
+            state_generation_kwargs = {
+                **inference_kwargs,
+                **(state.generation_kwargs or {}),
+                **(state.specific_kwargs or {}),
+            }
+            self.samplers[state_id] = self.make_sampler(**state_generation_kwargs)
+            self.logits_processors[state_id] = self.make_processors(**state_generation_kwargs)
+
+        self.samplers["root"] = self.make_sampler(**inference_kwargs)
+        self.logits_processors["root"] = self.make_processors(**inference_kwargs)
+        logger.info(
+            f"Loaded {len(self.samplers)} samplers and {len(self.logits_processors)} logits processors"
+        )
+
+        generated_ids, finish_reason = await self.generate(encoded_prompt, **inference_kwargs)
+        logger.info(f"\nGENERATED: {self.tokenizer.decode(generated_ids)}\n")
+
+        metadata = {
+            "finish_reason": finish_reason,
+            "prompt_tokens": prompt_length,
+            "completion_tokens": len(generated_ids),
+            "total_tokens": prompt_length + len(generated_ids),
+        }
+
+        content = []
+
+        for state_id, output in self.structuring_engine.get_stateful_structured_output():
+            if (engine_state := self.root_state_machine.available_states.get(state_id)) is None:
+                logger.warning(f"Unknown state: {state_id}")
+                continue
+
+            match engine_state.identifier:
+                case "structured_output":
+                    if isinstance(output, dict):
+                        output = json.dumps(output)
+
+                    content.append(Content.text(output))
+                    metadata["finish_reason"] = "stop"
+                case "text_output":
+                    content.append(Content.text(output))
+                    metadata["finish_reason"] = "stop"
+                case "tool_call":
+                    if not isinstance(output, dict):
+                        logger.warning(f"Tool call output is not a dictionary: {output}")
+                        continue
+                    if "name" not in output or "arguments" not in output:
+                        logger.warning(f"Tool call output is missing name or arguments: {output}")
+                        continue
+
+                    content.append(Content.tool_call(output["name"], output["arguments"]))
+                case _:
+                    logger.warning(f"Unknown state: {engine_state.identifier}")
+
+        return Interaction(
+            role=InteractionRole.AGENT,
+            content=content,
+            **metadata,
+        )
+
+    async def generate(
+        self,
+        prompt_ids: mx.array,
+        **inference_kwargs,
+    ) -> tuple[list[int], str]:
+        """
+        Generate a completion for the given prompt.
+
+        Args:
+            prompt_token_ids (mx.array): The input prompt for completion.
+        """
+        max_completion_tokens = int(inference_kwargs.get("max_completion_tokens", -1))
+
+        result: list[int] = []
+        stop_reason: str = "stop"
+
+        for token_id, _ in self.generate_step(prompt_ids):
+            tokens = token_id.tolist()
+            assert isinstance(tokens, list)
+            for token_id in tokens:
+                if token_id in self.tokenizer.stop_tokens:
+                    break
+
+                result.append(token_id)
+
+            if self.structuring_engine.has_reached_accept_state:
+                stop_reason = "tool_calls"
+                break
+
+            if max_completion_tokens > 0 and len(result) >= max_completion_tokens:
+                stop_reason = "length"
+                break
+
+        return result, stop_reason
+
+    def generate_step(
+        self,
+        prompt_ids: mx.array,
+        pixel_values: mx.array | None = None,
+        mask: mx.array | None = None,
+    ) -> Iterator[tuple[mx.array, mx.array]]:
+        """
+        Generates tokens autoregressively, yielding one token and its log probabilities per step.
+
+        Yields:
+            tuples of (next_token_id, log_probabilities).
+        """
+
+        def _inference(current_input_ids: mx.array) -> tuple[mx.array, mx.array]:
+            """Performs one forward pass, updates history, applies processors, and samples."""
+            model_kwargs: dict[str, Any] = {"cache": self.prompt_cache.cache}
+
+            # Only add optional parameters if they exist
+            if pixel_values is not None:
+                model_kwargs["pixel_values"] = pixel_values
+            if mask is not None:
+                model_kwargs["mask"] = mask
+
+            # Call model with appropriate arguments
+            logits = self.model(current_input_ids[None], **model_kwargs)
+            # Extract logits for the most recent token
+            last_token_logits = logits[:, -1, :]
+            self.prompt_cache.update(current_input_ids)
+
+            processed_logits = last_token_logits
+
+            # Apply any configured logits processors sequentially
+            current_token_history = self.prompt_cache.computed_ids
+            engine_state = self.structuring_engine.get_current_state() or "root"
+            for processor in self.logits_processors[engine_state] or []:
+                processed_logits = processor(current_token_history, processed_logits)
+
+            # Calculate log probabilities (log-softmax normalization)
+            logprobs = processed_logits - mx.logsumexp(
+                processed_logits, axis=-1, keepdims=True
+            )
+            # Sample the next token ID using the provided sampler function
+            next_token_id = self.samplers[engine_state](logprobs)
+            return next_token_id, logprobs.squeeze(0)
+
+        if len(self.prompt_cache.cache) == 0:
+            self.prompt_cache.create_kv_cache(self.model)
+
+        tokens_to_process = self.prompt_cache(prompt_ids)
+        next_token_id, current_logprobs = _inference(tokens_to_process)
+        mx.async_eval(next_token_id, current_logprobs)
+
+        step_count = 0
+        while True:
+            if step_count == 0:
+                # Synchronize computation for the first token
+                mx.eval(next_token_id)
+            else:
+                # Perform the next inference step
+                next_token_id, current_logprobs = _inference(next_token_id)
+                mx.async_eval(next_token_id, current_logprobs)
+
+            # Yield the token and its log probabilities.
+            yield next_token_id, current_logprobs
+
+            step_count += 1
+            # Periodically clear the MLX computation graph cache to prevent excessive memory growth.
+            if step_count % 256 == 0:
+                mx.clear_cache()
+
+    def make_sampler(self, **kwargs) -> Callable[[mx.array], mx.array]:
+        """
+        Return a sampler function.
+        If structured is True, use the structured sampler.
+        Otherwise, use the simple sampler.
+        """
+        temp = kwargs.get("temp", 1.0)
+        top_p = kwargs.get("top_p", 1.0)
+        top_k = kwargs.get("top_k", -1)
+        min_p = kwargs.get("min_p", 0.0)
+        min_tokens_to_keep = kwargs.get("min_tokens_to_keep", 1)
+        sampler = make_sampler(
+            temp=temp,
+            min_p=min_p,
+            min_tokens_to_keep=min_tokens_to_keep,
+            top_p=top_p,
+            top_k=top_k,
+        )
+        return lambda x: self.structuring_engine.sample(x, sampler)
+
+    def make_processors(self, **kwargs) -> list[Callable[[mx.array, mx.array], mx.array]]:
+        """
+        Return a list of logits processor functions.
+        """
+        logits_processors = []
+        logits_processors.append(self.structuring_engine.process_logits)
+
+        if kwargs.get("repetition_penalty", 1.0) != 1.0:
+            repetition_penalty = float(kwargs.get("repetition_penalty", 1.0))
+            context_size = int(kwargs.get("context_size", 60))
+            logits_processors.append(
+                repetition_penalty_logits_processor(repetition_penalty, context_size)
+            )
+
+        return logits_processors
+
+
+---

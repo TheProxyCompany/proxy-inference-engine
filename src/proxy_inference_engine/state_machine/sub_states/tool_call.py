@@ -25,6 +25,7 @@ class ToolCallState(SubState):
         delimiters: tuple[str, str] | None = ("```tool\n", "\n```"),
         tool_choice: str | dict[str, Any] | None = None,
         parallel_tool_calls: bool | None = None,
+        generation_kwargs: dict[str, Any] | None = None,
     ):
         """
         Initialize a new ToolCallState.
@@ -34,7 +35,7 @@ class ToolCallState(SubState):
             delimiters: Optional custom delimiters for the tool call state
             list_delimiters: Optional delimiters for the tool list in the prompt
         """
-        super().__init__(identifier="tool_call")
+        super().__init__(identifier="tool_call", generation_kwargs=generation_kwargs)
         self.delimiters = delimiters
         self.tool_choice = tool_choice
         self.parallel_tool_calls = parallel_tool_calls
@@ -53,7 +54,11 @@ class ToolCallState(SubState):
 
     @property
     def generation_kwargs(self) -> dict[str, Any]:
-        return {"temperature": 0.0, "repetition_penalty": 1.0, "min_p": 0.02}
+        return {
+            "temperature": 0.0,
+            "repetition_penalty": 1.0,
+            "min_p": 0.02
+        }
 
     @property
     def state_machine(self) -> StateMachine:

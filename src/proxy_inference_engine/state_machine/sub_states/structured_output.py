@@ -15,6 +15,7 @@ class StructuredOutputState(SubState):
         self,
         json_schema: dict[str, Any],
         delimiters: tuple[str, str] | None = ("```json\n", "\n```"),
+        generation_kwargs: dict[str, Any] | None = None,
     ):
         """
         Initialize a new StructuredOutputState.
@@ -23,7 +24,7 @@ class StructuredOutputState(SubState):
             json_schema: JSON schema for the structured output
             delimiters: Optional custom delimiters for the structured output state
         """
-        super().__init__(identifier="structured_output")
+        super().__init__(identifier="structured_output", generation_kwargs=generation_kwargs)
         self.delimiters = delimiters
         self.json_schema = json_schema
 

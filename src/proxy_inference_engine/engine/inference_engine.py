@@ -64,20 +64,23 @@ class InferenceEngine:
             "tools": inference_kwargs.get("tools"),
             "parallel_tool_calls": inference_kwargs.get("parallel_tool_calls"),
             "tool_choice": inference_kwargs.get("tool_choice"),
+            "generation_kwargs": inference_kwargs.get("generation_kwargs"),
         }
         self.root_state_machine.configure(**state_machine_kwargs)
         self.structuring_engine.reset()
         self.structuring_engine.configure(self.root_state_machine)
 
         for state_id, state in self.root_state_machine.available_states.items():
-            state_kwargs = state.generation_kwargs or inference_kwargs
-            self.samplers[state_id] = self.make_sampler(**state_kwargs)
-            self.logits_processors[state_id] = self.make_logits_processors(
-                **state_kwargs
-            )
+            state_generation_kwargs = {
+                **inference_kwargs,
+                **(state.generation_kwargs or {}),
+                **(state.specific_kwargs or {}),
+            }
+            self.samplers[state_id] = self.make_sampler(**state_generation_kwargs)
+            self.logits_processors[state_id] = self.make_processors(**state_generation_kwargs)
 
         self.samplers["root"] = self.make_sampler(**inference_kwargs)
-        self.logits_processors["root"] = self.make_logits_processors(**inference_kwargs)
+        self.logits_processors["root"] = self.make_processors(**inference_kwargs)
         logger.info(
             f"Loaded {len(self.samplers)} samplers and {len(self.logits_processors)} logits processors"
         )
@@ -103,7 +106,7 @@ class InferenceEngine:
                 case "structured_output":
                     if isinstance(output, dict):
                         output = json.dumps(output)
-                    
+
                     content.append(Content.text(output))
                     metadata["finish_reason"] = "stop"
                 case "text_output":
@@ -252,9 +255,7 @@ class InferenceEngine:
         )
         return lambda x: self.structuring_engine.sample(x, sampler)
 
-    def make_logits_processors(
-        self, **kwargs
-    ) -> list[Callable[[mx.array, mx.array], mx.array]]:
+    def make_processors(self, **kwargs) -> list[Callable[[mx.array, mx.array], mx.array]]:
         """
         Return a list of logits processor functions.
         """

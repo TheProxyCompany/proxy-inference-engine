@@ -1,10 +1,12 @@
+from typing import Any
+
 from pse.types.misc.freeform import FreeformStateMachine
 from pse_core.state_machine import StateMachine
 
 from proxy_inference_engine.state_machine.sub_state import SubState
 
 
-class TextState(SubState):
+class TextOutputState(SubState):
     """
     State for freeform text.
     """
@@ -13,6 +15,7 @@ class TextState(SubState):
         self,
         end_delimiters: list[str],
         min_characters: int | None = None,
+        generation_kwargs: dict[str, Any] | None = None,
     ):
         """
         Initialize a new FreeformTextState.
@@ -21,7 +24,7 @@ class TextState(SubState):
             end_delimiters: delimiters for the freeform text state
             min_characters: minimum number of characters to generate
         """
-        super().__init__(identifier="text_output")
+        super().__init__(identifier="text_output", generation_kwargs=generation_kwargs)
         self.end_delimiters = end_delimiters
         self.min_characters = min_characters
 
