@@ -85,9 +85,33 @@ async def handle_completion_request(
     }
 
     try:
-        generated_text, metadata = await engine(
+        new_interaction = await engine(
             input_interactions,
             **inference_kwargs,
+        )
+        finish_reason = new_interaction.metadata.get("finish_reason", "unknown")
+        prompt_tokens = new_interaction.metadata.get("prompt_tokens", 0)
+        completion_tokens = new_interaction.metadata.get("completion_tokens", 0)
+        total_tokens = new_interaction.metadata.get("total_tokens", 0)
+
+        new_content = new_interaction.content[0].content if new_interaction.content else ""
+        choice = CompletionChoice(
+            index=0,
+            text=new_content,
+            logprobs=None,
+            finish_reason=finish_reason,
+        )
+
+        usage = CompletionUsage(
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
+
+        response = CompletionResponse(
+            model=request.model,
+            choices=[choice],
+            usage=usage,
         )
     except InferenceError as e:
         logger.error(f"Inference error processing request: {e}", exc_info=True)
@@ -108,28 +132,5 @@ async def handle_completion_request(
             detail="An unexpected error occurred during completion.",
         ) from e
 
-    finish_reason = metadata.get("finish_reason", "unknown")
-    prompt_tokens = metadata.get("prompt_tokens", 0)
-    completion_tokens = metadata.get("completion_tokens", 0)
-    total_tokens = metadata.get("total_tokens", 0)
-
-    choice = CompletionChoice(
-        index=0,
-        text=generated_text,
-        logprobs=None,
-        finish_reason=finish_reason,
-    )
-
-    usage = CompletionUsage(
-        input_tokens=prompt_tokens,
-        output_tokens=completion_tokens,
-        total_tokens=total_tokens,
-    )
-
-    response = CompletionResponse(
-        model=request.model,
-        choices=[choice],
-        usage=usage,
-    )
     logger.info(f"Completion request successful. ID: {response.id}")
     return response

@@ -69,6 +69,44 @@ async def handle_response_request(
             input_interactions,
             **inference_kwargs,
         )
+        prompt_tokens = new_interaction.metadata.get("prompt_tokens", 0)
+        completion_tokens = new_interaction.metadata.get("completion_tokens", 0)
+        total_tokens = new_interaction.metadata.get("total_tokens", 0)
+
+        response_content = []
+        for item in new_interaction.content:
+            match item.type:
+                case InteractionType.TEXT:
+                    response_content.append(OutputTextContent(text=item.content))
+                case InteractionType.TOOL_CALL:
+                    assert isinstance(item.content, dict)
+                    name, arguments = item.content.get("name"), item.content.get("arguments")
+                    assert isinstance(name, str)
+                    assert isinstance(arguments, dict)
+                    response_content.append(OutputFunctionCall(name=name, arguments=json.dumps(arguments)))
+                case _:
+                    logger.warning(f"Unknown content type: {item.type}")
+
+        response_message = OutputMessage(content=response_content)
+        usage = ResponseUsage(
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
+
+        response = ResponseObject(
+            model=request.model,
+            output=[response_message],
+            usage=usage,
+            min_p=request.min_p,
+            top_p=request.top_p,
+            top_k=request.top_k,
+            temperature=request.temperature,
+            parallel_tool_calls=request.parallel_tool_calls or False,
+            tool_choice=request.tool_choice,
+            tools=request.tools or [],
+            text=request.text,
+        )
     except InferenceError as e:
         logger.error(f"Inference error processing request: {e}", exc_info=True)
         raise HTTPException(
@@ -88,43 +126,5 @@ async def handle_response_request(
             detail="An unexpected error occurred during completion.",
         ) from e
 
-    prompt_tokens = new_interaction.metadata.get("prompt_tokens", 0)
-    completion_tokens = new_interaction.metadata.get("completion_tokens", 0)
-    total_tokens = new_interaction.metadata.get("total_tokens", 0)
-
-    response_content = []
-    for item in new_interaction.content:
-        match item.type:
-            case InteractionType.TEXT:
-                response_content.append(OutputTextContent(text=item.content))
-            case InteractionType.TOOL_CALL:
-                assert isinstance(item.content, dict)
-                name, arguments = item.content.get("name"), item.content.get("arguments")
-                assert isinstance(name, str)
-                assert isinstance(arguments, dict)
-                response_content.append(OutputFunctionCall(name=name, arguments=json.dumps(arguments)))
-            case _:
-                logger.warning(f"Unknown content type: {item.type}")
-
-    response_message = OutputMessage(content=response_content)
-    usage = ResponseUsage(
-        input_tokens=prompt_tokens,
-        output_tokens=completion_tokens,
-        total_tokens=total_tokens,
-    )
-
-    response = ResponseObject(
-        model=request.model,
-        output=[response_message],
-        usage=usage,
-        min_p=request.min_p,
-        top_p=request.top_p,
-        top_k=request.top_k,
-        temperature=request.temperature,
-        parallel_tool_calls=request.parallel_tool_calls or False,
-        tool_choice=request.tool_choice,
-        tools=request.tools or [],
-        text=request.text,
-    )
     logger.info(f"Response request successful. ID: {response.id}")
     return response

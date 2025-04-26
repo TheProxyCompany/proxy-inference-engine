@@ -108,6 +108,7 @@ class InferenceEngine:
                 case "tool_call":
                     if not isinstance(output, dict):
                         logger.warning(f"Tool call output is not a dictionary: {output}")
+                        breakpoint()
                         continue
                     if "name" not in output or "arguments" not in output:
                         logger.warning(f"Tool call output is missing name or arguments: {output}")

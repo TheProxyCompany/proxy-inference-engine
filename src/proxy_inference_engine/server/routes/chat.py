@@ -57,6 +57,28 @@ async def handle_completion_request(
             input_interactions,
             **inference_kwargs,
         )
+        finish_reason = new_interaction.metadata.get("finish_reason", "unknown")
+        prompt_tokens = new_interaction.metadata.get("prompt_tokens", 0)
+        completion_tokens = new_interaction.metadata.get("completion_tokens", 0)
+        total_tokens = new_interaction.metadata.get("total_tokens", 0)
+
+        choice = ChatCompletionChoice(
+            index=0,
+            message=ChatMessage.from_interaction(new_interaction),
+            finish_reason=finish_reason,
+        )
+
+        usage = ChatCompletionUsage(
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
+
+        response = ChatCompletionResponse(
+            model=request.model,
+            choices=[choice],
+            usage=usage,
+        )
     except InferenceError as e:
         logger.error(f"Inference error processing request: {e}", exc_info=True)
         raise HTTPException(
@@ -76,27 +98,5 @@ async def handle_completion_request(
             detail="An unexpected error occurred during completion.",
         ) from e
 
-    finish_reason = new_interaction.metadata.get("finish_reason", "unknown")
-    prompt_tokens = new_interaction.metadata.get("prompt_tokens", 0)
-    completion_tokens = new_interaction.metadata.get("completion_tokens", 0)
-    total_tokens = new_interaction.metadata.get("total_tokens", 0)
-
-    choice = ChatCompletionChoice(
-        index=0,
-        message=ChatMessage.from_interaction(new_interaction),
-        finish_reason=finish_reason,
-    )
-
-    usage = ChatCompletionUsage(
-        input_tokens=prompt_tokens,
-        output_tokens=completion_tokens,
-        total_tokens=total_tokens,
-    )
-
-    response = ChatCompletionResponse(
-        model=request.model,
-        choices=[choice],
-        usage=usage,
-    )
     logger.info(f"Chat completion request successful. ID: {response.id}")
     return response
