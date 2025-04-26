@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -56,7 +57,7 @@ class InferenceEngine:
         prompt_length = encoded_prompt.size
 
         self.prompt_cache.load_cached_prompt(encoded_prompt)
-        logger.info(f"PROMPT:\n{self.tokenizer.decode(encoded_prompt)}")
+        logger.info(f"\nPROMPT: {self.tokenizer.decode(encoded_prompt)}\n")
 
         state_machine_kwargs = {
             "response_format": inference_kwargs.get("response_format"),
@@ -82,7 +83,7 @@ class InferenceEngine:
         )
 
         generated_ids, finish_reason = await self.generate(encoded_prompt, **inference_kwargs)
-        logger.info(f"\nGENERATED:\n{self.tokenizer.decode(generated_ids)}\n\n")
+        logger.info(f"\nGENERATED: {self.tokenizer.decode(generated_ids)}\n")
 
         metadata = {
             "finish_reason": finish_reason,
@@ -98,14 +99,16 @@ class InferenceEngine:
                 logger.warning(f"Unknown state: {state_id}")
                 continue
 
-            logger.info(f"STATE: {engine_state.identifier}")
-            logger.info(f"OUTPUT: {output}")
-
             match engine_state.identifier:
-                case "structured_output" | "text_output":
+                case "structured_output":
+                    if isinstance(output, dict):
+                        output = json.dumps(output)
+                    
                     content.append(Content.text(output))
-                    if engine_state.identifier == "structured_output":
-                        metadata["finish_reason"] = "stop"
+                    metadata["finish_reason"] = "stop"
+                case "text_output":
+                    content.append(Content.text(output))
+                    metadata["finish_reason"] = "stop"
                 case "tool_call":
                     if not isinstance(output, dict):
                         logger.warning(f"Tool call output is not a dictionary: {output}")
@@ -138,14 +141,13 @@ class InferenceEngine:
         max_completion_tokens = int(inference_kwargs.get("max_completion_tokens", -1))
 
         result: list[int] = []
-        stop_reason: str = "finish"
+        stop_reason: str = "stop"
 
         for token_id, _ in self.generate_step(prompt_ids):
             tokens = token_id.tolist()
             assert isinstance(tokens, list)
             for token_id in tokens:
                 if token_id in self.tokenizer.stop_tokens:
-                    stop_reason = "stop"
                     break
 
                 result.append(token_id)

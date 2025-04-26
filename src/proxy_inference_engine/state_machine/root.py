@@ -1,8 +1,9 @@
 from typing import Any
 
-from pse.structuring_engine import StateMachine, Stepper
 from pse.types.base.any import AnyStateMachine
 from pse_core import StateGraph, StateId
+from pse_core.state_machine import StateMachine
+from pse_core.stepper import Stepper
 
 from proxy_inference_engine.state_machine.sub_state import SubState
 from proxy_inference_engine.state_machine.sub_states import (
@@ -70,6 +71,9 @@ class RootStateMachine(StateMachine):
         if response_format.get("type") == "json_schema":
             structured_output_state = StructuredOutputState(response_format, delimiters=None)
             self.available_states[structured_output_state.identifier] = structured_output_state
+        elif response_format.get("type") == "json_object":
+            json_object_state = StructuredOutputState({})
+            self.available_states[json_object_state.identifier] = json_object_state
         elif tools and tool_choice != "none":
             tool_call_state = ToolCallState(
                 tools,

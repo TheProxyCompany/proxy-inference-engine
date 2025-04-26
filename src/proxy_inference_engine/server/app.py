@@ -13,7 +13,7 @@ from proxy_inference_engine.server.routes.completions import completions_router
 from proxy_inference_engine.server.routes.responses import responses_router
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)

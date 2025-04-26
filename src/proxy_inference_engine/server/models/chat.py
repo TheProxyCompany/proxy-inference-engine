@@ -212,6 +212,14 @@ class ChatCompletionTextResponseFormat(BaseModel):
     def to_dict(self):
         return self.model_dump()
 
+class ChatCompletionJsonObjectResponseFormat(BaseModel):
+    """Defines the response format for the chat completion request."""
+
+    type: Literal["json_object"] = "json_object"
+
+    def to_dict(self):
+        return self.model_dump()
+
 
 class ChatCompletionRequest(BaseModel):
     """Defines the request schema for the chat completion endpoint."""
@@ -265,7 +273,10 @@ class ChatCompletionRequest(BaseModel):
         description="A list of tools that the model can use to generate a response.",
     )
     response_format: (
-        ChatCompletionTextResponseFormat | ChatCompletionJSONSchemaResponseFormat | None
+        ChatCompletionTextResponseFormat |
+        ChatCompletionJSONSchemaResponseFormat |
+        ChatCompletionJsonObjectResponseFormat |
+        None
     ) = Field(
         default=None,
         description="The format of the response.",
