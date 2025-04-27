@@ -41,9 +41,9 @@ class ChatCompletionLogProbs(BaseModel):
         tokens: list[int],
         logprobs: list[dict[int, float]] | None,
         decode_func: Callable[[int], str],
-    ) -> ChatCompletionLogProbs.LogProbsContent:
+    ) -> ChatCompletionLogProbs.LogProbsContent | None:
         if logprobs is None or len(logprobs) == 0:
-            return ChatCompletionLogProbs.LogProbsContent(content=None)
+            return None
 
         logprobs_content = []
         for token_id, generated_logprobs in zip(tokens, logprobs, strict=True):

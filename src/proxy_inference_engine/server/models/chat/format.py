@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatCompletionJSONSchemaResponseFormat(BaseModel):
@@ -21,6 +21,9 @@ class ChatCompletionJSONSchemaResponseFormat(BaseModel):
         )
         json_schema: dict = Field(
             description="The JSON schema for the response format.", alias="schema"
+        )
+        model_config = ConfigDict(
+            populate_by_name=True,
         )
 
     type: Literal["json_schema"] = "json_schema"
