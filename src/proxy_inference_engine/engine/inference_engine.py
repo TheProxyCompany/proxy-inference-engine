@@ -247,6 +247,9 @@ class InferenceEngine:
             # Apply any configured logits processors sequentially
             current_token_history = self.prompt_cache.computed_ids
             engine_state = self.structuring_engine.get_current_state() or "root"
+            if engine_state not in self.logits_processors:
+                engine_state = "root"
+
             for processor in self.logits_processors[engine_state] or []:
                 processed_logits = processor(current_token_history, processed_logits)
 

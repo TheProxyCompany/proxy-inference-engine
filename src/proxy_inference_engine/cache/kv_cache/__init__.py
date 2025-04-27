@@ -202,11 +202,11 @@ class BaseCache(ABC):
         cache_metadata = tree_unflatten(list(cache_metadata.items()))
         info, metadata, classes = cache_metadata
         cache = [globals()[c]() for c in classes]
-        for c, state, meta_state in zip(cache, arrays, info):
+        for c, state, meta_state in zip(cache, arrays, info, strict=True):
             assert isinstance(c, BaseCache)
             c.state = state
             c.meta_state = meta_state
-  
+
         return cache, metadata
 
     @staticmethod
@@ -266,6 +266,8 @@ class BaseCache(ABC):
 
 
 from proxy_inference_engine.cache.kv_cache.cache import KVCache  # noqa: E402
-from proxy_inference_engine.cache.kv_cache.quantized import QuantizedKVCache  # noqa: E402
+from proxy_inference_engine.cache.kv_cache.quantized import (  # noqa: E402
+    QuantizedKVCache,
+)
 from proxy_inference_engine.cache.kv_cache.reusable import ReusableKVCache  # noqa: E402
 from proxy_inference_engine.cache.kv_cache.rotating import RotatingKVCache  # noqa: E402
