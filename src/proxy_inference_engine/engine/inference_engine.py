@@ -95,7 +95,7 @@ class InferenceEngine:
             f"Loaded {len(self.samplers)} samplers and {len(self.logits_processors)} logits processors"
         )
 
-        finish_reason = None
+        finish_reason = "stop"
         generation_loop = self.generate(encoded_prompt, **inference_kwargs)
         generated_ids = []
         generated_logprobs = []
@@ -110,7 +110,6 @@ class InferenceEngine:
             assert isinstance(finish_reason, str)
 
         logger.info(f"\nGENERATED: {self.tokenizer.decode(generated_ids)}\n")
-
         metadata = {
             "finish_reason": finish_reason,
             "prompt_tokens": prompt_length,
@@ -121,6 +120,7 @@ class InferenceEngine:
         }
 
         content: list[Content] = []
+
         for state_id, output in self.structuring_engine.get_labeled_output():
             state = self.root_state_machine.get_sub_state(state_id)
             if state is None:
@@ -174,9 +174,11 @@ class InferenceEngine:
         max_completion_tokens = inference_kwargs.get("max_completion_tokens", -1)
         collect_logprobs = inference_kwargs.get("logprobs", False)
         top_logprobs: int = inference_kwargs.get("top_logprobs", 0)
-        stop_reason: str = "stop"
 
+        logprobs_map: dict[int, float] = {}
+        stop_reason: str = "stop"
         token_count = 0
+
         for new_tokens, new_logprobs in self.generate_step(prompt_ids):
             token_count += new_tokens.size
             if collect_logprobs :

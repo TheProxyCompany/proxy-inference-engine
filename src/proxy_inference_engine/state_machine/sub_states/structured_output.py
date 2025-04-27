@@ -26,7 +26,7 @@ class StructuredOutputState(SubState):
         """
         super().__init__(identifier="structured_output", generation_kwargs=generation_kwargs)
         self.delimiters = delimiters
-        self.json_schema = json_schema
+        self.json_schema = json_schema.get("schema", json_schema.get("json_schema", {}))
 
     @property
     def state_machine(self) -> StateMachine:

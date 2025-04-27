@@ -131,5 +131,7 @@ class RootStepper(Stepper):
         """Get the final state of the stepper."""
         if self.history:
             return self.history
+        elif self.sub_stepper:
+            return [self.sub_stepper]
         else:
             return super().get_final_state()
