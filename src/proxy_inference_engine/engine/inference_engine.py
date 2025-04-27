@@ -1,12 +1,13 @@
 import json
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from typing import Any
 
 import mlx.core as mx
 from pse.structuring_engine import StructuringEngine
 
 from proxy_inference_engine.cache import PromptCache
+from proxy_inference_engine.engine.utils import get_top_logprobs
 from proxy_inference_engine.interaction import InteractionRole
 from proxy_inference_engine.interaction.content import Content
 from proxy_inference_engine.interaction.interaction import Interaction
@@ -18,6 +19,9 @@ from proxy_inference_engine.tokenizer import Tokenizer
 
 logger = logging.getLogger(__name__)
 
+type Sampler = Callable[[mx.array], mx.array]
+type LogitsProcessor = Callable[[mx.array, mx.array], mx.array]
+type ModelOutput = tuple[int, dict[int, float]]
 
 class InferenceEngine:
     """
@@ -36,11 +40,15 @@ class InferenceEngine:
             multi_token_sampling=True,
         )
 
-        self.samplers: dict[str, Callable[[mx.array], mx.array]] = {}
-        self.logits_processors: dict[str, list[Callable[[mx.array, mx.array], mx.array]]] = {}
+        self.samplers: dict[str, Sampler] = {}
+        self.logits_processors: dict[str, list[LogitsProcessor]] = {}
         logger.info(f"Inference Engine initialized with model from {model_path}")
 
-    async def __call__(self, prompt: list[Interaction], **inference_kwargs) -> Interaction:
+    def __call__(
+        self,
+        prompt: list[Interaction],
+        **inference_kwargs,
+    ) -> Interaction:
         """
         Generate a completion for the given prompt.
 
@@ -77,7 +85,9 @@ class InferenceEngine:
                 **(state.specific_kwargs or {}),
             }
             self.samplers[state_id] = self.make_sampler(**state_generation_kwargs)
-            self.logits_processors[state_id] = self.make_processors(**state_generation_kwargs)
+            self.logits_processors[state_id] = self.make_processors(
+                **state_generation_kwargs
+            )
 
         self.samplers["root"] = self.make_sampler(**inference_kwargs)
         self.logits_processors["root"] = self.make_processors(**inference_kwargs)
@@ -85,7 +95,20 @@ class InferenceEngine:
             f"Loaded {len(self.samplers)} samplers and {len(self.logits_processors)} logits processors"
         )
 
-        generated_ids, finish_reason = await self.generate(encoded_prompt, **inference_kwargs)
+        finish_reason = None
+        generation_loop = self.generate(encoded_prompt, **inference_kwargs)
+        generated_ids = []
+        generated_logprobs = []
+
+        try:
+            for token_id, logprobs_map in generation_loop:
+                generated_ids.append(token_id)
+                if inference_kwargs.get("logprobs", False):
+                    generated_logprobs.append(logprobs_map)
+        except StopIteration as exc:
+            finish_reason = exc.value
+            assert isinstance(finish_reason, str)
+
         logger.info(f"\nGENERATED: {self.tokenizer.decode(generated_ids)}\n")
 
         metadata = {
@@ -93,36 +116,43 @@ class InferenceEngine:
             "prompt_tokens": prompt_length,
             "completion_tokens": len(generated_ids),
             "total_tokens": prompt_length + len(generated_ids),
+            "generated_tokens": generated_ids,
+            "generated_logprobs": generated_logprobs or None,
         }
 
-        content = []
-
-        for state_id, output in self.structuring_engine.get_stateful_structured_output():
-            if (engine_state := self.root_state_machine.available_states.get(state_id)) is None:
+        content: list[Content] = []
+        for state_id, output in self.structuring_engine.get_labeled_output():
+            state = self.root_state_machine.get_sub_state(state_id)
+            if state is None:
                 logger.warning(f"Unknown state: {state_id}")
                 continue
 
-            match engine_state.identifier:
+            match state.identifier:
                 case "structured_output":
                     if isinstance(output, dict):
                         output = json.dumps(output)
 
                     content.append(Content.text(output))
-                    metadata["finish_reason"] = "stop"
-                case "text_output":
-                    content.append(Content.text(output))
-                    metadata["finish_reason"] = "stop"
-                case "tool_call":
-                    if not isinstance(output, dict):
-                        logger.warning(f"Tool call output is not a dictionary: {output}")
-                        continue
-                    if "name" not in output or "arguments" not in output:
-                        logger.warning(f"Tool call output is missing name or arguments: {output}")
+                case "tool_calls":
+                    if (
+                        not isinstance(output, dict)
+                        or "name" not in output
+                        or "arguments" not in output
+                    ):
+                        logger.warning(f"Malformed tool call output: {output}")
                         continue
 
-                    content.append(Content.tool_call(output["name"], output["arguments"]))
+                    content.append(
+                        Content.tool_call(
+                            output["name"],
+                            output["arguments"]
+                        )
+                    )
+                    metadata["finish_reason"] = "tool_calls"
+                case "text_output":
+                    content.append(Content.text(output))
                 case _:
-                    logger.warning(f"Unknown state: {engine_state.identifier}")
+                    logger.warning(f"Unknown state: {state.identifier}")
 
         return Interaction(
             role=InteractionRole.AGENT,
@@ -130,40 +160,56 @@ class InferenceEngine:
             **metadata,
         )
 
-    async def generate(
+    def generate(
         self,
         prompt_ids: mx.array,
         **inference_kwargs,
-    ) -> tuple[list[int], str]:
+    ) -> Generator[ModelOutput, None, str]:
         """
         Generate a completion for the given prompt.
 
         Args:
             prompt_token_ids (mx.array): The input prompt for completion.
         """
-        max_completion_tokens = int(inference_kwargs.get("max_completion_tokens", -1))
-
-        result: list[int] = []
+        max_completion_tokens = inference_kwargs.get("max_completion_tokens", -1)
+        collect_logprobs = inference_kwargs.get("logprobs", False)
+        top_logprobs: int = inference_kwargs.get("top_logprobs", 0)
         stop_reason: str = "stop"
 
-        for token_id, _ in self.generate_step(prompt_ids):
-            tokens = token_id.tolist()
+        token_count = 0
+        for new_tokens, new_logprobs in self.generate_step(prompt_ids):
+            token_count += new_tokens.size
+            if collect_logprobs :
+                logprobs_map = get_top_logprobs(
+                    new_logprobs,
+                    top_logprobs
+                )
+
+            tokens = new_tokens.tolist()
             assert isinstance(tokens, list)
             for token_id in tokens:
+                assert isinstance(token_id, int)
                 if token_id in self.tokenizer.stop_tokens:
                     break
 
-                result.append(token_id)
+                if collect_logprobs and token_id not in logprobs_map:
+                    # If the token is not in the logprobs map, it is not in the top k
+                    # but we still need to return a logprob value for it
+                    prob_value = new_logprobs[token_id].item()
+                    assert isinstance(prob_value, float)
+                    logprobs_map[token_id] = prob_value
+
+                yield token_id, logprobs_map
 
             if self.structuring_engine.has_reached_accept_state:
                 stop_reason = "tool_calls"
                 break
 
-            if max_completion_tokens > 0 and len(result) >= max_completion_tokens:
+            if max_completion_tokens > 0 and token_count >= max_completion_tokens:
                 stop_reason = "length"
                 break
 
-        return result, stop_reason
+        return stop_reason
 
     def generate_step(
         self,
@@ -255,7 +301,9 @@ class InferenceEngine:
         )
         return lambda x: self.structuring_engine.sample(x, sampler)
 
-    def make_processors(self, **kwargs) -> list[Callable[[mx.array, mx.array], mx.array]]:
+    def make_processors(
+        self, **kwargs
+    ) -> list[Callable[[mx.array, mx.array], mx.array]]:
         """
         Return a list of logits processor functions.
         """

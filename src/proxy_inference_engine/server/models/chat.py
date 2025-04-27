@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import secrets
 import time
+from collections.abc import Callable
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from proxy_inference_engine.interaction import (
     Content,
@@ -20,10 +21,12 @@ CHAT_COMPLETION_ID_PREFIX = "chatcmpl-"
 CHAT_COMPLETION_OBJECT = "chat.completion"
 TOOL_CALL_ID_PREFIX = "call-"
 
+
 def generate_chat_completion_id(prefix: str = CHAT_COMPLETION_ID_PREFIX) -> str:
     """Generates a unique identifier string for a completion response."""
     random_part = secrets.token_urlsafe(22)
     return f"{prefix}{random_part}"
+
 
 def generate_tool_call_id(prefix: str = TOOL_CALL_ID_PREFIX) -> str:
     """Generates a unique identifier string for a tool call."""
@@ -79,20 +82,26 @@ class ChatMessage(BaseModel):
 
         return ChatMessage(role=role, content=content, tool_calls=tool_calls)
 
+
 class ChatCompletionToolUsage(BaseModel):
     """Represents the usage of a tool in a chat completion."""
 
     class UsedFunction(BaseModel):
         """Represents a function that was used in a chat completion."""
+
         name: str = Field(description="The name of the function to call.")
-        arguments: str = Field(description="The arguments to pass to the function. JSON encoded.")
+        arguments: str = Field(
+            description="The arguments to pass to the function. JSON encoded."
+        )
 
     type: Literal["function"] = "function"
     id: str = Field(description="The unique identifier of the tool.")
     function: UsedFunction = Field(description="The function that was used.")
 
     @staticmethod
-    def from_content(content: Content, tool_call_id: str | None = None) -> ChatCompletionToolUsage:
+    def from_content(
+        content: Content, tool_call_id: str | None = None
+    ) -> ChatCompletionToolUsage:
         if content.type != InteractionType.TOOL_CALL:
             raise ValueError("Content is not a tool call.")
 
@@ -113,6 +122,7 @@ class ChatCompletionToolUsage(BaseModel):
             id=tool_call_id or generate_tool_call_id(),
             function=used_function,
         )
+
 
 class ChatCompletionToolChoice(BaseModel):
     """Defines a tool for the chat completion request."""
@@ -212,6 +222,7 @@ class ChatCompletionTextResponseFormat(BaseModel):
     def to_dict(self):
         return self.model_dump()
 
+
 class ChatCompletionJsonObjectResponseFormat(BaseModel):
     """Defines the response format for the chat completion request."""
 
@@ -260,6 +271,10 @@ class ChatCompletionRequest(BaseModel):
         le=1.0,
         description="Minimum probability threshold for token consideration.",
     )
+    logprobs: bool | None = Field(
+        default=False,
+        description="Whether to include the log probabilities of each token in the response.",
+    )
     parallel_tool_calls: bool | None = Field(
         default=None,
         description="Whether to allow the model to run tool calls in parallel.",
@@ -272,15 +287,120 @@ class ChatCompletionRequest(BaseModel):
         default=None,
         description="A list of tools that the model can use to generate a response.",
     )
+    top_logprobs: int | None = Field(
+        default=None,
+        ge=0,
+        le=20,
+        description="The number of top log probabilities to include in the response.",
+    )
     response_format: (
-        ChatCompletionTextResponseFormat |
-        ChatCompletionJSONSchemaResponseFormat |
-        ChatCompletionJsonObjectResponseFormat |
-        None
+        ChatCompletionTextResponseFormat
+        | ChatCompletionJSONSchemaResponseFormat
+        | ChatCompletionJsonObjectResponseFormat
+        | None
     ) = Field(
         default=None,
         description="The format of the response.",
     )
+    stop: str | list[str] | None = Field(
+        default=None,
+        description="A list of tokens to stop generation of the response. The returned text will not contain the stop sequence.",
+    )
+
+    stream: bool | None = Field(
+        default=False,
+        description="Whether to stream the response to the client using Server-Sent Events.",
+    )
+    stream_options: ChatCompletionStreamOptions | None = Field(
+        default=None,
+        description="Additional options for streaming the response.",
+    )
+
+
+class ChatCompletionStreamOptions(BaseModel):
+    """Additional options for streaming the response."""
+
+    include_usage: bool | None = Field(
+        default=False,
+        description="Whether to include the usage statistics in the response.",
+    )
+
+
+class ChatCompletionLogProbs(BaseModel):
+    """Represents the log probabilities of each token in the response."""
+
+    class LogProbsContent(BaseModel):
+        content: list[ChatCompletionLogProbs] | None = Field(
+            default=None,
+            description="A list of message content tokens with log probability information.",
+        )
+
+    bytes: list[int] | None = Field(
+        default=None,
+        description="A list of integers representing the UTF-8 bytes representation of the token.",
+    )
+    token: str = Field(description="The token.")
+    logprob: float = Field(description="The log probability of this token.")
+    top_logprobs: list[ChatCompletionLogProbs] | None = Field(
+        default=None,
+        description="The top log probabilities for this token.",
+    )
+
+    @model_serializer
+    def serialize_model(self):
+        result = {
+            "token": self.token,
+            "logprob": self.logprob,
+            "bytes": self.bytes,
+        }
+        if self.top_logprobs:
+            result["top_logprobs"] = self.top_logprobs
+        return result
+
+    @staticmethod
+    def from_generation(
+        tokens: list[int],
+        logprobs: list[dict[int, float]] | None,
+        decode_func: Callable[[int], str],
+    ) -> ChatCompletionLogProbs.LogProbsContent:
+        if logprobs is None or len(logprobs) == 0:
+            return ChatCompletionLogProbs.LogProbsContent(content=None)
+
+        logprobs_content = []
+        for token_id, generated_logprobs in zip(tokens, logprobs, strict=True):
+
+            item_map: dict[int, ChatCompletionLogProbs] = {}
+            for possible_token_id, logprob_value in generated_logprobs.items():
+                token_string = decode_func(possible_token_id)
+                utf8_bytes = list(token_string.encode("utf-8"))
+                if logprob_value == float("-inf"):
+                    logprob_value = -9999.0
+
+                item = ChatCompletionLogProbs(
+                    bytes=utf8_bytes,
+                    token=token_string,
+                    logprob=logprob_value
+                )
+                item_map[possible_token_id] = item
+
+            sampled_item = item_map.get(token_id)
+            sampled_score = sampled_item.logprob if sampled_item else -9999.0
+            sampled_token_string = decode_func(token_id)
+
+            selected_item = ChatCompletionLogProbs(
+                bytes=list(sampled_token_string.encode("utf-8")),
+                token=sampled_token_string,
+                logprob=sampled_score,
+            )
+
+            if len(item_map) > 1:
+                top_logprobs = list(item_map.values())
+                top_logprobs.sort(key=lambda x: x.logprob, reverse=True)
+                selected_item.top_logprobs = top_logprobs
+
+            logprobs_content.append(selected_item)
+
+        return ChatCompletionLogProbs.LogProbsContent(content=logprobs_content)
 
 
 class ChatCompletionChoice(BaseModel):
@@ -290,6 +410,10 @@ class ChatCompletionChoice(BaseModel):
     message: ChatMessage = Field(description="The message generated by the model.")
     finish_reason: str | None = Field(
         description="Reason generation stopped (e.g., 'stop', 'length', 'tool_calls')."
+    )
+    logprobs: ChatCompletionLogProbs.LogProbsContent | None = Field(
+        default=None,
+        description="Log probability information for the choice.",
     )
 
 

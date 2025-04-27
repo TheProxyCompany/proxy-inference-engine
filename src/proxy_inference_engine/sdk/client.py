@@ -15,13 +15,11 @@ class InferenceEngineClient:
         self.model_path = model_path
         self.engine = InferenceEngine(model_path)
 
-    async def generate(self, request: GenerationRequest) -> Interaction:
+    def generate(self, request: GenerationRequest) -> Interaction:
         """
         Generate a chat completion.
         """
         engine_request = request.to_interactions()
-        engine_result = await self.engine(
-            engine_request,
-            **(request.generation_kwargs or {}),
-        )
-        return engine_result
+        engine_kwargs = request.generation_kwargs or {}
+
+        return self.engine(engine_request, **engine_kwargs)

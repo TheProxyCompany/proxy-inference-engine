@@ -29,7 +29,7 @@ class Content:
             case InteractionType.IMAGE:
                 content_dict["image_url"] = self.content
             case InteractionType.TOOL_CALL:
-                content_dict["tool_call"] = self.content
+                content_dict["tool_calls"] = self.content
             case _:
                 content_dict["file_url"] = self.content
 

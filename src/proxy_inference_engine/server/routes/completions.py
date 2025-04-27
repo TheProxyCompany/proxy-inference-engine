@@ -85,10 +85,7 @@ async def handle_completion_request(
     }
 
     try:
-        new_interaction = await engine(
-            input_interactions,
-            **inference_kwargs,
-        )
+        new_interaction = engine(input_interactions, **inference_kwargs)
         finish_reason = new_interaction.metadata.get("finish_reason", "unknown")
         prompt_tokens = new_interaction.metadata.get("prompt_tokens", 0)
         completion_tokens = new_interaction.metadata.get("completion_tokens", 0)

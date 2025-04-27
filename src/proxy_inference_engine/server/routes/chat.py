@@ -8,6 +8,7 @@ from proxy_inference_engine.server.app import get_inference_engine
 from proxy_inference_engine.server.exceptions import InferenceError
 from proxy_inference_engine.server.models.chat import (
     ChatCompletionChoice,
+    ChatCompletionLogProbs,
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatCompletionUsage,
@@ -49,23 +50,29 @@ async def handle_completion_request(
         "tool_choice": request.tool_choice.to_dict() if request.tool_choice else None,
         "tools": [tool.to_dict() for tool in request.tools] if request.tools else None,
         "response_format": request.response_format.to_dict() if request.response_format else None,
+        "logprobs": request.logprobs,
+        "top_logprobs": request.top_logprobs,
     }
     inference_kwargs = {k: v for k, v in inference_kwargs.items() if v is not None}
 
     try:
-        new_interaction = await engine(
-            input_interactions,
-            **inference_kwargs,
-        )
+        new_interaction = engine(input_interactions, **inference_kwargs)
         finish_reason = new_interaction.metadata.get("finish_reason", "unknown")
         prompt_tokens = new_interaction.metadata.get("prompt_tokens", 0)
         completion_tokens = new_interaction.metadata.get("completion_tokens", 0)
         total_tokens = new_interaction.metadata.get("total_tokens", 0)
+        generated_tokens = new_interaction.metadata.get("generated_tokens", [])
+        generated_logprobs = new_interaction.metadata.get("generated_logprobs", None)
 
         choice = ChatCompletionChoice(
             index=0,
             message=ChatMessage.from_interaction(new_interaction),
             finish_reason=finish_reason,
+            logprobs=ChatCompletionLogProbs.from_generation(
+                generated_tokens,
+                generated_logprobs,
+                engine.tokenizer.decode,
+            ),
         )
 
         usage = ChatCompletionUsage(

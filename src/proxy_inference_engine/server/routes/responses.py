@@ -65,10 +65,7 @@ async def handle_response_request(
     inference_kwargs = {k: v for k, v in inference_kwargs.items() if v is not None}
 
     try:
-        new_interaction = await engine(
-            input_interactions,
-            **inference_kwargs,
-        )
+        new_interaction = engine(input_interactions, **inference_kwargs)
         prompt_tokens = new_interaction.metadata.get("prompt_tokens", 0)
         completion_tokens = new_interaction.metadata.get("completion_tokens", 0)
         total_tokens = new_interaction.metadata.get("total_tokens", 0)

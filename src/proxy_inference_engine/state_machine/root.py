@@ -33,6 +33,13 @@ class RootStateMachine(StateMachine):
         """Get a new stepper for the root state machine."""
         return RootStepper(self)
 
+    def get_sub_state(self, identifier: str) -> SubState:
+        """Get a sub state by identifier."""
+        if identifier not in self.available_states:
+            raise ValueError(f"Unknown sub state: {identifier}")
+
+        return self.available_states[identifier]
+
     def configure(
         self,
         response_format: dict[str, Any] | None = None,

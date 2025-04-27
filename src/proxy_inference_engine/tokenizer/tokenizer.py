@@ -109,7 +109,7 @@ class Tokenizer:
         # Flatten and deduplicate token IDs into a set
         return stop_tokens
 
-    def decode(self, tokens: mx.array | list[int], **kwargs) -> str:
+    def decode(self, tokens: mx.array | list[int] | int, **kwargs) -> str:
         """Decode token IDs back to text.
 
         Args:
