@@ -60,7 +60,7 @@ packages = ["proxy_inference_engine"]
 
 [tool.py-build-cmake.cmake]
 source_path = "src/pie_core"
-args = ["-Wdev", "-DPYTHON_MODULE_NAME=pie_core"]
+args = ["-Wdev"]
 build_args = ["-j"]
 build_type = "RelWithDebInfo"
 find_python = true

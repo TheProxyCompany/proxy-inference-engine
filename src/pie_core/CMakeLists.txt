@@ -2,13 +2,12 @@ cmake_minimum_required(VERSION 3.20)
 cmake_policy(SET CMP0087 NEW)
 
 set(EXTENSION_NAME pie_core)
-
 project(${EXTENSION_NAME} LANGUAGES CXX)
 
-# C++ settings
-set(CMAKE_CXX_STANDARD 23)
+# --- C++ Settings & Build Type ---
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS ON)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 \
@@ -61,28 +60,41 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release")
 endif()
 
-# Python configuration
-set(DEV_MODULE Development.Module)
+# --- Python Configuration ---
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+message(STATUS "Using Python site-packages (Python_SITELIB): ${Python_SITELIB}")
 
-set(Python_VIRTUALENV FIRST)
-find_package(Python COMPONENTS Interpreter ${DEV_MODULE} REQUIRED)
+# --- Find External Dependencies ---
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/mlx)
 
-# External dependencies
-add_subdirectory(${CMAKE_SOURCE_DIR}/external/nanobind)
+# --- Find installed pse_core package location ---
+set(pse_core_DIR "${Python_SITELIB}/pse_core/cmake")
+message(STATUS "Setting pse_core_DIR to: ${pse_core_DIR}")
+find_package(pse_core REQUIRED)
 
-# Include directories
+# --- Check results and proceed ---
+if(TARGET pse_core::pse_core)
+    message(STATUS "Found pse_core target: pse_core::pse_core")
+    set(PSE_CORE_LINK_TARGET pse_core::pse_core)
+elseif(pse_core_LIBRARIES)
+    message(STATUS "Found pse_core libraries: ${pse_core_LIBRARIES}")
+    set(PSE_CORE_LINK_TARGET ${pse_core_LIBRARIES})
+else()
+    message(FATAL_ERROR "find_package(pse_core) succeeded but did not define a usable target or library variable.")
+endif()
+
+# --- Global Include Directories ---
 include_directories(
     SYSTEM
+    ${pse_core_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/external/nanobind/include
-    ${CMAKE_SOURCE_DIR}/external/mlx/include
-    )
-include_directories( ${CMAKE_SOURCE_DIR}/include )
+    ${CMAKE_SOURCE_DIR}/include
+)
 
-# Source files
-file(GLOB_RECURSE pie_core_src CONFIGURE_DEPENDS
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+# --- Source Files, Module Definition, Target Properties ---
+file(GLOB_RECURSE pie_core_src CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 
-# Main module configuration
 nanobind_add_module(
     ${EXTENSION_NAME}
     STABLE_ABI LTO NOMINSIZE
@@ -97,16 +109,17 @@ target_compile_definitions(
         $<$<CONFIG:Debug>:ENABLE_ASSERTIONS>
 )
 
-target_include_directories(
+# --- Target Link Libraries ---
+target_link_libraries(
     ${EXTENSION_NAME}
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/include
+        mlx
+        ${PSE_CORE_LINK_TARGET}
 )
 
-# Installation
+# --- Installation ---
 install(
     TARGETS ${EXTENSION_NAME}
-    LIBRARY DESTINATION .
+    LIBRARY DESTINATION proxy_inference_engine
     COMPONENT python_modules
 )
