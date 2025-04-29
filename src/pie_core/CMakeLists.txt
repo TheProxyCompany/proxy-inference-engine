@@ -5,7 +5,7 @@ set(EXTENSION_NAME pie_core)
 project(${EXTENSION_NAME} LANGUAGES CXX)
 
 # --- C++ Settings & Build Type ---
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
@@ -28,7 +28,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
         -Ofast \
-        -march=native \
         -mtune=native \
         -flto=auto \
         -DNDEBUG \
@@ -61,6 +60,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # --- Python Configuration ---
+set(Python_VIRTUALENV FIRST)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 message(STATUS "Using Python site-packages (Python_SITELIB): ${Python_SITELIB}")
 
@@ -88,8 +88,9 @@ endif()
 include_directories(
     SYSTEM
     ${pse_core_INCLUDE_DIRS}
-    ${CMAKE_SOURCE_DIR}/external/nanobind/include
-    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/mlx
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 # --- Source Files, Module Definition, Target Properties ---
@@ -97,7 +98,7 @@ file(GLOB_RECURSE pie_core_src CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src
 
 nanobind_add_module(
     ${EXTENSION_NAME}
-    STABLE_ABI LTO NOMINSIZE
+    STABLE_ABI NB_STATIC LTO NOMINSIZE
     ${pie_core_src}
 )
 
@@ -107,14 +108,6 @@ target_compile_definitions(
         MODULE_NAME=$<TARGET_FILE_BASE_NAME:${EXTENSION_NAME}>
         VERSION_INFO="${PY_FULL_VERSION}"
         $<$<CONFIG:Debug>:ENABLE_ASSERTIONS>
-)
-
-# --- Target Link Libraries ---
-target_link_libraries(
-    ${EXTENSION_NAME}
-    PRIVATE
-        mlx
-        ${PSE_CORE_LINK_TARGET}
 )
 
 # --- Installation ---
