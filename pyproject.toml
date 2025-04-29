@@ -53,25 +53,18 @@ dev = [
 "Bug Tracker" = "https://github.com/TheProxyCompany/proxy-inference-engine/issues"
 "Documentation" = "https://github.com/TheProxyCompany/proxy-inference-engine"
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+packages = ["proxy_inference_engine"]
+
 [tool.py-build-cmake.cmake]
 source_path = "src/pie_core"
-args = ["-Wdev", "-Wno-unused-variable", "-DPYTHON_MODULE_NAME=pie_core"]
+args = ["-Wdev", "-DPYTHON_MODULE_NAME=pie_core"]
 build_args = ["-j"]
 build_type = "RelWithDebInfo"
 find_python = true
 install_components = ["python_modules"]
-
-[tool.setuptools]
-package-dir = {"" = "src"}
-include-package-data = true
-
-[tool.black]
-line-length = 100
-target-version = ["py312"]
-
-[tool.isort]
-profile = "black"
-line_length = 100
 
 
 [tool.ruff.lint]
@@ -91,3 +84,11 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 100

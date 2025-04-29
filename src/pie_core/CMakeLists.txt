@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 cmake_policy(SET CMP0087 NEW)
 
-set(PROJECT_NAME proxy_inference_engine)
 set(EXTENSION_NAME pie_core)
 
 project(${EXTENSION_NAME} LANGUAGES CXX)
@@ -69,10 +68,14 @@ set(Python_VIRTUALENV FIRST)
 find_package(Python COMPONENTS Interpreter ${DEV_MODULE} REQUIRED)
 
 # External dependencies
-add_subdirectory(external/nanobind       ${CMAKE_BINARY_DIR}/nanobind)
+add_subdirectory(${CMAKE_SOURCE_DIR}/external/nanobind)
 
 # Include directories
-include_directories( SYSTEM ${CMAKE_BINARY_DIR}/nanobind/include )
+include_directories(
+    SYSTEM
+    ${CMAKE_SOURCE_DIR}/external/nanobind/include
+    ${CMAKE_SOURCE_DIR}/external/mlx/include
+    )
 include_directories( ${CMAKE_SOURCE_DIR}/include )
 
 # Source files
@@ -82,7 +85,7 @@ file(GLOB_RECURSE pie_core_src CONFIGURE_DEPENDS
 # Main module configuration
 nanobind_add_module(
     ${EXTENSION_NAME}
-    STABLE_ABI NB_STATIC LTO NOMINSIZE
+    STABLE_ABI LTO NOMINSIZE
     ${pie_core_src}
 )
 
@@ -104,6 +107,6 @@ target_include_directories(
 # Installation
 install(
     TARGETS ${EXTENSION_NAME}
-    DESTINATION ${PROJECT_NAME}
+    LIBRARY DESTINATION .
     COMPONENT python_modules
 )
