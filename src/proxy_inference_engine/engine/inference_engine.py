@@ -253,10 +253,8 @@ class InferenceEngine:
             for processor in self.logits_processors[engine_state] or []:
                 processed_logits = processor(current_token_history, processed_logits)
 
-            # Calculate log probabilities (log-softmax normalization)
-            logprobs = processed_logits - mx.logsumexp(
-                processed_logits, axis=-1, keepdims=True
-            )
+            logits_f32 = processed_logits.astype(mx.float32)
+            logprobs = logits_f32 - mx.logsumexp(logits_f32, axis=-1, keepdims=True)
             # Sample the next token ID using the provided sampler function
             next_token_id = self.samplers[engine_state](logprobs)
             return next_token_id, logprobs.squeeze(0)

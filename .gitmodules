@@ -1,0 +1,6 @@
+[submodule "src/pie_core/external/nanobind"]
+	path = src/pie_core/external/nanobind
+	url = https://github.com/wjakob/nanobind
+[submodule "src/pie_core/external/mlx"]
+	path = src/pie_core/external/mlx
+	url = https://github.com/ml-explore/mlx.git

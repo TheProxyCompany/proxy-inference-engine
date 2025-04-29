@@ -1,16 +1,16 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["py-build-cmake", "nanobind"]
+build-backend = "py_build_cmake.build"
 
 [project]
 name = "proxy-inference-engine"
-version = "0.2.0"
+version = "0.1.1"
 description = "Optimized LLM & MLX inference for Apple Silicon."
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
-    {name = "The Proxy Company", email = "info@theproxy.co"}
+    {name = "The Proxy Company", email = "hello@the"}
 ]
 keywords = ["mlx", "inference", "llm", "apple", "vision", "language", "model", "ai", "proxy"]
 classifiers = [
@@ -23,6 +23,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Operating System :: MacOS :: MacOS X",
 ]
+
 dependencies = [
     "pse",
     "mlx_lm",
@@ -33,6 +34,7 @@ dependencies = [
     "huggingface-hub",
     "fastapi[standard]",
     "pydantic-settings",
+    "py-build-cmake"
 ]
 
 [project.optional-dependencies]
@@ -50,6 +52,14 @@ dev = [
 "Homepage" = "https://github.com/TheProxyCompany/proxy-inference-engine"
 "Bug Tracker" = "https://github.com/TheProxyCompany/proxy-inference-engine/issues"
 "Documentation" = "https://github.com/TheProxyCompany/proxy-inference-engine"
+
+[tool.py-build-cmake.cmake]
+source_path = "src/pie_core"
+args = ["-Wdev", "-Wno-unused-variable", "-DPYTHON_MODULE_NAME=pie_core"]
+build_args = ["-j"]
+build_type = "RelWithDebInfo"
+find_python = true
+install_components = ["python_modules"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
