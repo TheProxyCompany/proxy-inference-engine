@@ -99,9 +99,9 @@ class QuantizedKVCache(BaseCache):
         assert self.keys is not None and self.values is not None
 
         # Tuple wrangling without index acrobatics
-        for key_arr, quant_val in zip(self.keys, (keys_quant, keys_scale, keys_bias)):
+        for key_arr, quant_val in zip(self.keys, (keys_quant, keys_scale, keys_bias), strict=True):
             key_arr[..., prev : self.offset, :] = quant_val
-        for val_arr, quant_val in zip(self.values, (values_quant, values_scale, values_bias)):
+        for val_arr, quant_val in zip(self.values, (values_quant, values_scale, values_bias), strict=True):
             val_arr[..., prev : self.offset, :] = quant_val
 
         return tree_map(lambda x: x[..., : self.offset, :], (self.keys, self.values))

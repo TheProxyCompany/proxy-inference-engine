@@ -1,12 +1,11 @@
 import mlx.core as mx
 import mlx.nn as nn
-from pydantic import BaseModel
 
 from proxy_inference_engine.cache.kv_cache import BaseCache
-from proxy_inference_engine.models.base import create_attention_mask
+from proxy_inference_engine.models.base import BaseModelArgs, create_attention_mask
 
 
-class TextConfig(BaseModel):
+class TextConfig(BaseModelArgs):
     model_type: str
     hidden_size: int
     num_hidden_layers: int

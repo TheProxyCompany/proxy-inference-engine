@@ -45,7 +45,9 @@ class ControlTokens(BaseModel):
         Returns:
             A list of end tokens.
         """
-        return [self.end_of_sequence, self.end_of_message]
+        stripped_end_of_sequence = self.end_of_sequence.strip()
+        stripped_end_of_message = self.end_of_message.strip()
+        return [stripped_end_of_sequence, stripped_end_of_message]
 
     def get_whitelist_control_tokens(self) -> list[str]:
         """Returns the control tokens used for tokenization.
@@ -70,6 +72,8 @@ def get_control_tokens(tokenizer_config: dict) -> ControlTokens:
     match model_type:
         case "gemma":
             return _load_control_tokens("gemma")
+        case "llama":
+            return _load_control_tokens("llama")
         case _: # default to chatml
             return _load_control_tokens("chatml")
 
@@ -77,11 +81,12 @@ def get_control_tokens(tokenizer_config: dict) -> ControlTokens:
 def _determine_model_type(tokenizer_config: dict) -> str:
     """Determine the model type from the model path."""
     model_type = tokenizer_config.get("model_type", "chatml")
-
     eos_token = tokenizer_config.get("eos_token", "<|eot_id|>")
 
     if isinstance(eos_token, str) and eos_token.strip() == "<|im_end|>":
         model_type = "chatml"
+    elif isinstance(eos_token, str) and eos_token.strip() == "<|eot_id|>":
+        model_type = "llama"
 
     return model_type
 

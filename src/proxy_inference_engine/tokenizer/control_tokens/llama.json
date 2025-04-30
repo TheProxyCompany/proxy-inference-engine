@@ -1,0 +1,28 @@
+{
+    "template_type": "llama",
+    "begin_of_text": "<|begin_of_text|>",
+    "end_of_message": "<|eom_id|>",
+    "end_of_sequence": "<|eot_id|>",
+    "roles": {
+        "agent": {
+            "role_name": "assistant",
+            "role_start_tag": "<|start_header_id|>",
+            "role_end_tag": "<|end_header_id|>\n\n"
+        },
+        "system": {
+            "role_name": "system",
+            "role_start_tag": "<|start_header_id|>",
+            "role_end_tag": "<|end_header_id|>\n\n"
+        },
+        "tool": {
+            "role_name": "ipython",
+            "role_start_tag": "<|start_header_id|>",
+            "role_end_tag": "<|end_header_id|>\n\n"
+        },
+        "user": {
+            "role_name": "user",
+            "role_start_tag": "<|start_header_id|>",
+            "role_end_tag": "<|end_header_id|>\n\n"
+        }
+    }
+}
