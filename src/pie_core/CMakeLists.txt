@@ -27,7 +27,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     )
 else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
-        -Ofast \
+        -O3 \
         -mtune=native \
         -flto=auto \
         -DNDEBUG \
@@ -37,8 +37,7 @@ else()
         -fstack-protector-strong \
         -D_FORTIFY_SOURCE=2 \
         -funroll-loops \
-        -finline-functions \
-        -fno-plt"
+        -finline-functions"
     )
 
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -92,7 +91,7 @@ include_directories(
     SYSTEM
     ${pse_core_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/mlx
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/mlx/mlx
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
