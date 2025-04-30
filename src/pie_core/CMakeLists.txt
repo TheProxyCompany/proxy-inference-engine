@@ -69,19 +69,22 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/mlx)
 
 # --- Find installed pse_core package location ---
-set(pse_core_DIR "${Python_SITELIB}/pse_core/cmake")
+set(pse_core_DIR "${Python_SITELIB}/pse_core/sdk/cmake")
 message(STATUS "Setting pse_core_DIR to: ${pse_core_DIR}")
 find_package(pse_core REQUIRED)
 
 # --- Check results and proceed ---
-if(TARGET pse_core::pse_core)
-    message(STATUS "Found pse_core target: pse_core::pse_core")
-    set(PSE_CORE_LINK_TARGET pse_core::pse_core)
-elseif(pse_core_LIBRARIES)
-    message(STATUS "Found pse_core libraries: ${pse_core_LIBRARIES}")
-    set(PSE_CORE_LINK_TARGET ${pse_core_LIBRARIES})
+# Check if the specific library target 'pse_core::pse_sdk' exists after find_package
+if(TARGET pse_core::pse_sdk)
+    message(STATUS "Found pse_core target: pse_core::pse_sdk")
+    # Set the variable to the correct target name
+    set(PSE_CORE_LINK_TARGET pse_core::pse_sdk)
 else()
-    message(FATAL_ERROR "find_package(pse_core) succeeded but did not define a usable target or library variable.")
+    # If the target doesn't exist, check for the older variable style as a fallback (less likely)
+    if(pse_core_LIBRARIES)
+        message(STATUS "Found pse_core libraries variable: ${pse_core_LIBRARIES}")
+        set(PSE_CORE_LINK_TARGET ${pse_core_LIBRARIES})
+    endif()
 endif()
 
 # --- Global Include Directories ---
@@ -100,6 +103,14 @@ nanobind_add_module(
     ${EXTENSION_NAME}
     STABLE_ABI NB_STATIC LTO NOMINSIZE
     ${pie_core_src}
+)
+
+target_link_libraries(
+    ${EXTENSION_NAME}
+    PRIVATE
+        ${PSE_CORE_LINK_TARGET}
+        mlx
+
 )
 
 target_compile_definitions(
