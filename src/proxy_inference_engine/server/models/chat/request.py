@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from proxy_inference_engine.interaction import (
     Content,
@@ -26,12 +27,24 @@ from proxy_inference_engine.server.models.chat.tools import (
 class ChatMessage(BaseModel):
     """Represents a single message within the chat conversation."""
 
-    role: str = Field(description="The role of the messages author.")
+    role: str | None = Field(default="", description="The role of the messages author.")
     content: str | None = Field(description="The contents of the message.")
     tool_calls: list[ChatCompletionToolUsage] = Field(
         default=[],
         description="The tool calls that were made in the message.",
     )
+
+    @model_serializer
+    def serialize_model(self) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        if self.role:
+            result["role"] = self.role
+        if self.content:
+            result["content"] = self.content
+        if self.tool_calls:
+            result["tool_calls"] = [tool_call.model_dump() for tool_call in self.tool_calls]
+
+        return result
 
     def to_interaction(self) -> Interaction:
         role = InteractionRole(self.role)
@@ -151,7 +164,6 @@ class ChatCompletionRequest(BaseModel):
         default=None,
         description="Additional options for streaming the response.",
     )
-
 
 class ChatCompletionStreamOptions(BaseModel):
     """Additional options for streaming the response."""

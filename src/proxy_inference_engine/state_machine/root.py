@@ -48,6 +48,7 @@ class RootStateMachine(StateMachine):
         parallel_tool_calls: bool | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         generation_kwargs: dict[str, Any] | None = None,
+        stop: str | list[str] | None = None,
     ):
         """
         Configure the root state machine.
@@ -59,6 +60,7 @@ class RootStateMachine(StateMachine):
             parallel_tool_calls,
             tool_choice,
             generation_kwargs,
+            stop,
         )
 
     def _create_state_graph(
@@ -69,6 +71,7 @@ class RootStateMachine(StateMachine):
         parallel_tool_calls: bool | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         generation_kwargs: dict[str, Any] | None = None,
+        stop_sequences: str | list[str] | None = None,
     ) -> StateGraph:
         """
         Create and configure all states for the root state machine.
@@ -103,6 +106,11 @@ class RootStateMachine(StateMachine):
 
         if response_format.get("type") == "text" and tool_choice != "required":
             end_tokens = self.control_tokens.end_tokens()
+            if stop_sequences:
+                if isinstance(stop_sequences, str):
+                    stop_sequences = [stop_sequences]
+                end_tokens = end_tokens + stop_sequences
+
             freeform_text = TextOutputState(
                 end_delimiters=end_tokens,
                 generation_kwargs=generation_kwargs,

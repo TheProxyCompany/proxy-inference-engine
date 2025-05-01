@@ -44,17 +44,13 @@ class InferenceEngine:
         self.logits_processors: dict[str, list[LogitsProcessor]] = {}
         logger.info(f"Inference Engine initialized with model from {model_path}")
 
-    def __call__(
+    def prepare_engine(
         self,
         prompt: list[Interaction],
         **inference_kwargs,
-    ) -> Interaction:
+    ) -> mx.array:
         """
-        Generate a completion for the given prompt.
-
-        Args:
-            prompt (list[Interaction]): The input prompt for completion.
-            **inference_kwargs: Additional keyword arguments to use for inference.
+        Prepare the engine for inference.
         """
         tokenizer_config = {
             "prompt": prompt,
@@ -62,7 +58,6 @@ class InferenceEngine:
             **self.tokenizer.control_tokens.model_dump(),
         }
         encoded_prompt = self.tokenizer.encode(**tokenizer_config)
-        prompt_length = encoded_prompt.size
 
         self.prompt_cache.load_cached_prompt(encoded_prompt)
         logger.info(f"\nPROMPT: {self.tokenizer.decode(encoded_prompt)}\n")
@@ -73,6 +68,7 @@ class InferenceEngine:
             "parallel_tool_calls": inference_kwargs.get("parallel_tool_calls"),
             "tool_choice": inference_kwargs.get("tool_choice"),
             "generation_kwargs": inference_kwargs.get("generation_kwargs"),
+            "stop": inference_kwargs.get("stop"),
         }
         self.root_state_machine.configure(**state_machine_kwargs)
         self.structuring_engine.reset()
@@ -95,13 +91,36 @@ class InferenceEngine:
             f"Loaded {len(self.samplers)} samplers and {len(self.logits_processors)} logits processors"
         )
 
+        return encoded_prompt
+
+    def __call__(
+        self,
+        prompt: list[Interaction],
+        **inference_kwargs,
+    ) -> Interaction:
+        """
+        Generate a completion for the given prompt.
+
+        Args:
+            prompt (list[Interaction]): The input prompt for completion.
+            **inference_kwargs: Additional keyword arguments to use for inference.
+        """
+        encoded_prompt = self.prepare_engine(prompt, **inference_kwargs)
+        return self.generate_interaction(encoded_prompt, **inference_kwargs)
+
+    def generate_interaction(self, encoded_prompt: mx.array, **inference_kwargs) -> Interaction:
+        """
+        Generate a completion for the given prompt.
+        """
         finish_reason = "stop"
-        generation_loop = self.generate(encoded_prompt, **inference_kwargs)
         generated_ids = []
         generated_logprobs = []
+        prompt_length = encoded_prompt.size
 
         try:
-            for token_id, logprobs_map in generation_loop:
+            for token_id, logprobs_map in self.generate(
+                encoded_prompt, **inference_kwargs
+            ):
                 generated_ids.append(token_id)
                 if inference_kwargs.get("logprobs", False):
                     generated_logprobs.append(logprobs_map)
@@ -123,10 +142,6 @@ class InferenceEngine:
 
         for state_id, output in self.structuring_engine.get_labeled_output():
             state = self.root_state_machine.get_sub_state(state_id)
-            if state is None:
-                logger.warning(f"Unknown state: {state_id}")
-                continue
-
             match state.identifier:
                 case "structured_output":
                     if isinstance(output, dict):
@@ -143,10 +158,7 @@ class InferenceEngine:
                         continue
 
                     content.append(
-                        Content.tool_call(
-                            output["name"],
-                            output["arguments"]
-                        )
+                        Content.tool_call(output["name"], output["arguments"])
                     )
                     metadata["finish_reason"] = "tool_calls"
                 case "text_output":

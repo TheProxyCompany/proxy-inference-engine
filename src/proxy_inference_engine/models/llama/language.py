@@ -36,19 +36,21 @@ class Attention(nn.Module):
         dim = args.hidden_size
         self.num_heads = args.num_attention_heads
         self.n_kv_heads = args.num_key_value_heads or args.num_attention_heads
+        self.head_dim = args.head_dim or args.hidden_size // self.num_heads
 
-        self.head_dim = head_dim = args.head_dim or args.hidden_size // self.num_heads
-
-        self.scale = head_dim**-0.5
+        self.scale = self.head_dim**-0.5
         if hasattr(args, "attention_bias"):
             attention_bias = args.attention_bias
         else:
             attention_bias = False
 
-        self.q_proj = nn.Linear(dim, self.num_heads * head_dim, bias=attention_bias)
-        self.k_proj = nn.Linear(dim, self.n_kv_heads * head_dim, bias=attention_bias)
-        self.v_proj = nn.Linear(dim, self.n_kv_heads * head_dim, bias=attention_bias)
-        self.o_proj = nn.Linear(self.num_heads * head_dim, dim, bias=attention_bias)
+        query_dim, output_dim = self.num_heads * self.head_dim, dim
+        kv_dim = self.n_kv_heads * self.head_dim
+
+        self.q_proj = nn.Linear(dim, query_dim, bias=attention_bias)
+        self.k_proj = nn.Linear(dim, kv_dim, bias=attention_bias)
+        self.v_proj = nn.Linear(dim, kv_dim, bias=attention_bias)
+        self.o_proj = nn.Linear(query_dim, output_dim, bias=attention_bias)
 
         max_embedding_length = args.max_position_embeddings or 8192
 
@@ -94,7 +96,12 @@ class Attention(nn.Module):
             keys = self.rope(keys)
 
         output = scaled_dot_product_attention(
-            queries, keys, values, cache=cache, scale=self.scale, mask=mask
+            queries,
+            keys,
+            values,
+            cache=cache,
+            scale=self.scale,
+            mask=mask,
         )
 
         output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
