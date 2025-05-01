@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 cmake_policy(SET CMP0087 NEW)
 
-set(EXTENSION_NAME pie_core)
-project(${EXTENSION_NAME} LANGUAGES CXX)
+set(PROJECT_NAME proxy_inference_engine) # Top-level project name
+set(EXTENSION_NAME pie_core)             # Python module name
+set(CORE_LIB_NAME pie_core_lib)          # C++ Static Library name
+set(ENGINE_EXE_NAME pie_engine)          # C++ Executable name
 
 # --- C++ Settings & Build Type ---
 set(CMAKE_CXX_STANDARD 23)
@@ -86,6 +88,8 @@ else()
     endif()
 endif()
 
+find_package(MLX CONFIG REQUIRED)
+
 # --- Global Include Directories ---
 include_directories(
     SYSTEM
@@ -96,28 +100,33 @@ include_directories(
 )
 
 # --- Source Files, Module Definition, Target Properties ---
-file(GLOB_RECURSE pie_core_src CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
-
-nanobind_add_module(
-    ${EXTENSION_NAME}
-    STABLE_ABI NB_STATIC LTO NOMINSIZE
-    ${pie_core_src}
+set(PIE_CORE_LIB_SRC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/page_allocator.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/paged_attention.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/scheduler.cpp"
 )
 
-target_link_libraries(
-    ${EXTENSION_NAME}
-    PRIVATE
-        ${PSE_CORE_LINK_TARGET}
-        mlx
+# Define source for Python bindings
+set(PIE_BINDINGS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/bindings.cpp")
+
+# Define source for the standalone C++ engine executable
+set(PIE_ENGINE_MAIN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
+
+add_library(${CORE_LIB_NAME} STATIC ${PIE_CORE_LIB_SRC})
+
+target_include_directories(${CORE_LIB_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+target_link_libraries(${CORE_LIB_NAME} PUBLIC
+    ${PSE_CORE_LINK_TARGET}
+    mlx
 )
 
-find_package(MLX CONFIG)
 # --- Build Metal Library ---
 if(MLX_BUILD_METAL)
     message(STATUS "Configuring Metal library build for pie_core")
     mlx_build_metallib(
         TARGET pie_core_metallib
-        TITLE pie_core
+        TITLE ${EXTENSION_NAME}
         SOURCES
             ${CMAKE_CURRENT_SOURCE_DIR}/src/kernels/paged_attention.metal
         INCLUDE_DIRS
@@ -125,8 +134,20 @@ if(MLX_BUILD_METAL)
              ${MLX_INCLUDE_DIRS}
         OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    add_dependencies(${EXTENSION_NAME} pie_core_metallib)
+    add_dependencies(${CORE_LIB_NAME} pie_core_metallib)
 endif()
+
+nanobind_add_module(
+    ${EXTENSION_NAME}
+    STABLE_ABI NB_STATIC LTO NOMINSIZE
+    ${PIE_BINDINGS_SRC}
+)
+
+target_link_libraries(
+    ${EXTENSION_NAME}
+    PRIVATE
+        ${CORE_LIB_NAME}
+)
 
 target_compile_definitions(
     ${EXTENSION_NAME}
@@ -136,9 +157,27 @@ target_compile_definitions(
         $<$<CONFIG:Debug>:ENABLE_ASSERTIONS>
 )
 
+# Install Metal library alongside Python module
+if(MLX_BUILD_METAL AND TARGET pie_core_metallib)
+    install(
+        FILES ${CMAKE_CURRENT_BINARY_DIR}/pie_core.metallib
+        DESTINATION ${PROJECT_NAME}
+        COMPONENT python_modules
+    )
+endif()
+
+add_executable(${ENGINE_EXE_NAME} ${PIE_ENGINE_MAIN_SRC})
+target_link_libraries(${ENGINE_EXE_NAME} PRIVATE ${CORE_LIB_NAME})
+
 # --- Installation ---
 install(
     TARGETS ${EXTENSION_NAME}
-    LIBRARY DESTINATION proxy_inference_engine
+    LIBRARY DESTINATION ${PROJECT_NAME}
     COMPONENT python_modules
+)
+
+install(
+    TARGETS ${ENGINE_EXE_NAME}
+    RUNTIME DESTINATION bin
+    COMPONENT engine_executable
 )
