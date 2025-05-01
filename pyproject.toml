@@ -58,6 +58,9 @@ package-dir = {"" = "src"}
 include-package-data = true
 packages = ["proxy_inference_engine"]
 
+[tool.setuptools.package-data]
+"proxy_inference_engine" = ["*.so", "*.dylib", "*.metallib"]
+
 [tool.py-build-cmake.cmake]
 source_path = "src/pie_core"
 args = ["-Wdev"]

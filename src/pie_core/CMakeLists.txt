@@ -119,11 +119,11 @@ if(MLX_BUILD_METAL)
         TARGET pie_core_metallib
         TITLE pie_core
         SOURCES
-            ${CMAKE_CURRENT_SOURCE_DIR}/kernels/paged_attention.metal
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/kernels/paged_attention.metal
         INCLUDE_DIRS
              ${CMAKE_CURRENT_SOURCE_DIR}/include
              ${MLX_INCLUDE_DIRS}
-        OUTPUT_DIRECTORY ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}
+        OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
     add_dependencies(${EXTENSION_NAME} pie_core_metallib)
 endif()
