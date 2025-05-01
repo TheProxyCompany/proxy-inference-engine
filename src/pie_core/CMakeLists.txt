@@ -109,8 +109,24 @@ target_link_libraries(
     PRIVATE
         ${PSE_CORE_LINK_TARGET}
         mlx
-
 )
+
+find_package(MLX CONFIG)
+# --- Build Metal Library ---
+if(MLX_BUILD_METAL)
+    message(STATUS "Configuring Metal library build for pie_core")
+    mlx_build_metallib(
+        TARGET pie_core_metallib
+        TITLE pie_core
+        SOURCES
+            ${CMAKE_CURRENT_SOURCE_DIR}/kernels/paged_attention.metal
+        INCLUDE_DIRS
+             ${CMAKE_CURRENT_SOURCE_DIR}/include
+             ${MLX_INCLUDE_DIRS}
+        OUTPUT_DIRECTORY ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}
+    )
+    add_dependencies(${EXTENSION_NAME} pie_core_metallib)
+endif()
 
 target_compile_definitions(
     ${EXTENSION_NAME}
