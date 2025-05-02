@@ -7,14 +7,12 @@
 #include <atomic>
 #include <memory>
 #include <stdexcept>
+#include <cassert>
 #include "page.hpp"
 
 namespace mx = mlx::core;
 
 namespace pie_core {
-
-    // Forward declare KVPage if needed, but including page.hpp is fine
-    // struct KVPage;
 
     class PageAllocator {
     public:
@@ -32,47 +30,51 @@ namespace pie_core {
 
         // Allocates a page ID from the free list.
         // Returns std::nullopt if the pool is exhausted.
-        // Assigns the page to the given sequence_id internally.
-        std::optional<uint32_t> allocate_page(uint32_t sequence_id);
+        std::optional<uint32_t> allocate_page();
 
-        // Returns a page ID to the free list.
-        void free_page(uint32_t page_id);
+        // Decrements the reference count of the page.
+        // If the count reaches 0, adds the page back to the free list.
+        void free_page(uint32_t page_id) {
+            check_page_id(page_id);
+            if (page_pool_[page_id].dec_ref() == 0) {
+                FreeNode* node_to_free = &node_pool_[page_id];
+                push_free_list(node_to_free);
+            }
+        }
+
+        // Explicitly increments the reference count for a page (for sharing).
+        // Use with caution - ensure the page is not already free.
+        void add_ref(uint32_t page_id) {
+            check_page_id(page_id);
+            page_pool_[page_id].add_ref();
+        }
 
         // Gets a reference to the KVPage object associated with a page ID.
-        // Throws if page_id is invalid.
+        // Throws std::out_of_range if page_id is invalid.
         KVPage& get_page(uint32_t page_id);
-        // Const version
         const KVPage& get_page(uint32_t page_id) const;
 
-        // Gets the total number of pages managed by the allocator.
+        // Returns the number of pages in the pool.
         [[nodiscard]] size_t size() const { return page_pool_.size(); }
 
-        // Gets the approximate number of free pages (can be racy).
-        // For monitoring/debugging, not for precise control flow.
+        // Returns the number of free pages in the pool.
         [[nodiscard]] size_t get_num_free_pages() const;
 
-
     private:
-        // Node structure for the lock-free stack (Treiber stack)
-        struct FreeNode {
-            uint32_t page_index;
-            FreeNode* next; // Pointer to the next free node
-        };
+        // Forward declaration of the private implementation details
+        struct FreeNode;
 
-        std::vector<KVPage> page_pool_; // Contiguous storage for all pages
-        std::vector<FreeNode> node_pool_; // Pre-allocated nodes for the stack
+        std::vector<KVPage> page_pool_; // Owns the pages
+        std::vector<FreeNode> node_pool_; // Nodes for the free list stack
 
-        // Atomic head pointer for the Treiber stack
-        // Points to the top FreeNode in the stack of free pages
-        std::atomic<FreeNode*> head_{nullptr};
+        std::atomic<FreeNode*> head_{nullptr}; // Head of the free list stack
+        std::atomic<size_t> num_free_pages_{0}; // Approximate count
 
-        // Atomic counter for approximate free page count (optional but useful)
-        std::atomic<size_t> num_free_pages_{0};
+        // Helper to validate page ID
+        void check_page_id(uint32_t page_id) const;
 
-        // Helper to push onto the lock-free stack
+        // Treiber stack operations - implementation in .cpp file
         void push_free_list(FreeNode* node);
-
-        // Helper to pop from the lock-free stack
         FreeNode* pop_free_list();
     };
 

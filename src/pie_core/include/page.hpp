@@ -3,17 +3,19 @@
 #include <mlx/mlx.h>
 #include <mlx/array.h>
 #include <cstdint>
+#include <atomic>
+#include <cassert>
 
 
 namespace mx = mlx::core;
 
 namespace pie_core {
 
-    constexpr uint16_t TOKENS_PER_PAGE = 64;
-    static_assert((TOKENS_PER_PAGE & (TOKENS_PER_PAGE-1)) == 0,
+    constexpr size_t TOKEN_CAPACITY_PER_PAGE = 64;
+    static_assert((TOKEN_CAPACITY_PER_PAGE & (TOKEN_CAPACITY_PER_PAGE-1)) == 0,
                   "TOKENS_PER_PAGE must be a power of two");
 
-    struct KVPage {
+    alignas(64) struct KVPage {
 
         KVPage(
             int32_t num_heads,
@@ -23,32 +25,61 @@ namespace pie_core {
             mx::Dtype scale_dtype = mx::float16
         ):  num_heads_(num_heads),
             head_dim_(head_dim),
-            key_cache_(mx::zeros({TOKENS_PER_PAGE, num_heads, head_dim}, cache_dtype)),
-            value_cache_(mx::zeros_like(key_cache_)),
+            key_cache_(mx::zeros({TOKEN_CAPACITY_PER_PAGE, num_heads, head_dim}, cache_dtype)),
+            value_cache_(mx::zeros({TOKEN_CAPACITY_PER_PAGE, num_heads, head_dim}, cache_dtype)),
             key_cache_scale_(mx::ones({num_heads, 1}, scale_dtype)),
-            value_cache_scale_(mx::ones_like(key_cache_scale_)),
-            page_id_(page_id)
+            value_cache_scale_(mx::ones({num_heads, 1}, scale_dtype)),
+            page_id_(page_id),
+            num_tokens_{0},
+            ref_count_{0}
         {
 
         }
 
-        [[nodiscard]] int32_t num_heads()   const { return num_heads_;    }
-        [[nodiscard]] int32_t head_dim()    const { return head_dim_;      }
-        [[nodiscard]] int32_t page_id()     const { return page_id_;    }
-        [[nodiscard]] int32_t sequence_id() const { return sequence_id_; }
-        [[nodiscard]] uint16_t num_tokens()  const { return num_tokens_;  }
+        // delete copy constructor and assignment operator
+        KVPage(const KVPage&) = delete;
+        KVPage& operator=(const KVPage&) = delete;
 
-        mx::array& key_cache() { return key_cache_; }
-        mx::array& value_cache() { return value_cache_; }
-        mx::array& key_cache_scale() { return key_cache_scale_; }
-        mx::array& value_cache_scale() { return value_cache_scale_; }
+        [[nodiscard]] int32_t num_heads()   const noexcept { return num_heads_;              }
+        [[nodiscard]] int32_t head_dim()    const noexcept { return head_dim_;               }
+        [[nodiscard]] int32_t page_id()     const noexcept { return page_id_;                }
+        [[nodiscard]] size_t num_tokens()   const noexcept { return num_tokens_;             }
+        [[nodiscard]] size_t capacity()     const noexcept { return TOKEN_CAPACITY_PER_PAGE; }
 
-        void reset(uint32_t new_seq_id) {
-            sequence_id_ = new_seq_id;
-            num_tokens_  = 0;
+        mx::array& key_cache()         noexcept { return key_cache_;        }
+        mx::array& value_cache()       noexcept { return value_cache_;      }
+        mx::array& key_cache_scale()   noexcept { return key_cache_scale_;  }
+        mx::array& value_cache_scale() noexcept { return value_cache_scale_;}
+
+        // Atomically increment the reference count.
+        // Returns the new count.
+        uint32_t add_ref() {
+            #ifndef NDEBUG
+            assert(ref_count_.load(std::memory_order_acquire) > 0 && "add_ref on free page");
+            #endif
+            return ref_count_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        }
+
+        // Atomically decrement the reference count.
+        // Returns the new count.
+        uint32_t dec_ref() {
+            #ifndef NDEBUG
+            assert(ref_count_.load(std::memory_order_acquire) > 0 && "dec_ref on free page");
+            #endif
+            return ref_count_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+        }
+
+        // Get the current reference count
+        [[nodiscard]] uint32_t get_ref_count() const {
+            return ref_count_.load(std::memory_order_acquire);
+        }
+
+        void set_num_tokens(size_t num_tokens) noexcept {
+            num_tokens_.store(num_tokens, std::memory_order_release);
         }
 
         private:
+            friend class PageAllocator;
             int32_t num_heads_; // number of attention heads
             int32_t head_dim_; // dimension of each attention head
 
@@ -63,8 +94,8 @@ namespace pie_core {
             mx::array value_cache_scale_; // [num_heads, 1]
 
             int32_t page_id_ = INT32_MAX; // unique identifier for the page
-            int32_t sequence_id_ = INT32_MAX; // unique identifier for the sequence
-            uint16_t num_tokens_ = 0; // number of tokens in the page
+            std::atomic<size_t> num_tokens_; // number of tokens in the page
+            std::atomic<uint32_t> ref_count_; // Atomic counter for references
 
     };
 }
