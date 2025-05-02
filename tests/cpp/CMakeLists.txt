@@ -17,7 +17,16 @@ foreach(src ${test_files})
     get_filename_component(target_name ${src} NAME_WE)
     add_executable(${target_name} ${src})
     target_compile_options(${target_name} PRIVATE "-fno-stack-protector")
-    set_target_properties(${target_name} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+    target_compile_options(${target_name} PRIVATE
+        $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
+    )
+    target_link_options(${target_name} PRIVATE
+        $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
+    )
+    # Also ensure LTO is disabled for coverage builds if it was enabled elsewhere
+    set_target_properties(${target_name} PROPERTIES
+        INTERPROCEDURAL_OPTIMIZATION $<$<NOT:$<CONFIG:Coverage>>:OFF>
+    )
     target_link_libraries(${target_name}
         PRIVATE pie_core_lib
                 GTest::gtest_main
