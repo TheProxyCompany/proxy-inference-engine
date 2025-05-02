@@ -1,6 +1,6 @@
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0 # Use the latest stable tag
+    rev: v5.0.0 # Use the latest stable tag
     hooks:
     -   id: check-yaml
     -   id: end-of-file-fixer
@@ -16,7 +16,7 @@ repos:
     hooks:
     -   id: pytest-pie
         name: Run Python Tests (pytest)
-        entry: pytest # Assumes pytest is installed in the environment
+        entry: pytest tests/python # Assumes pytest is installed in the environment
         language: system # Use the system's pytest
         types: [python]
         pass_filenames: false
@@ -30,4 +30,4 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-        stages: [push]
+        stages: [pre-push]
