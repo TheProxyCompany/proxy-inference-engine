@@ -5,13 +5,6 @@
 
 namespace pie_core {
 
-// Node structure for the lock-free stack (Treiber stack)
-// Defined here in the .cpp file to keep compile time down
-struct PageAllocator::FreeNode {
-    uint32_t page_index;
-    FreeNode* next; // Pointer to the next free node
-};
-
 PageAllocator::PageAllocator(
     size_t num_pages,
     int32_t num_heads,
@@ -87,6 +80,18 @@ std::optional<uint32_t> PageAllocator::allocate_page() {
     return node->page_index;
 }
 
+void PageAllocator::free_page(uint32_t page_id) {
+    check_page_id(page_id);
+    if (page_pool_[page_id].dec_ref() == 0) {
+        FreeNode* node_to_free = &node_pool_[page_id];
+        push_free_list(node_to_free);
+    }
+}
+
+void PageAllocator::add_ref(uint32_t page_id) {
+    check_page_id(page_id);
+    page_pool_[page_id].add_ref();
+}
 
 KVPage& PageAllocator::get_page(uint32_t page_id) {
     check_page_id(page_id);

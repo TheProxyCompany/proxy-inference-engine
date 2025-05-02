@@ -28,7 +28,6 @@ void signal_handler(int signum) {
 void scheduler_loop() {
     std::cout << "Scheduler thread started." << std::endl;
     pie_core::ipc::RequestSlot* slots = static_cast<pie_core::ipc::RequestSlot*>(shm_ptr);
-    uint64_t current_consumer_idx = 0; // Local consumer index
 
     while(running) {
         // --- TODO: Milestone 6: Replace this polling with kqueue wait ---
@@ -55,6 +54,10 @@ void scheduler_loop() {
 
 int main(int argc, char *argv[]) {
     std::cout << "Starting PIE Engine Process..." << std::endl;
+    std::cout << "argc: " << argc << std::endl;
+    if (argc > 1) {
+        std::cout << "argv[0]: " << argv[0] << std::endl;
+    }
 
     // --- Milestone 1 & 2: Setup Shared Memory & kqueue ---
     // Create/Open Shared Memory

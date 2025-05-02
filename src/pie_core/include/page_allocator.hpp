@@ -34,20 +34,11 @@ namespace pie_core {
 
         // Decrements the reference count of the page.
         // If the count reaches 0, adds the page back to the free list.
-        void free_page(uint32_t page_id) {
-            check_page_id(page_id);
-            if (page_pool_[page_id].dec_ref() == 0) {
-                FreeNode* node_to_free = &node_pool_[page_id];
-                push_free_list(node_to_free);
-            }
-        }
+        void free_page(uint32_t page_id);
 
         // Explicitly increments the reference count for a page (for sharing).
         // Use with caution - ensure the page is not already free.
-        void add_ref(uint32_t page_id) {
-            check_page_id(page_id);
-            page_pool_[page_id].add_ref();
-        }
+        void add_ref(uint32_t page_id);
 
         // Gets a reference to the KVPage object associated with a page ID.
         // Throws std::out_of_range if page_id is invalid.
@@ -61,8 +52,10 @@ namespace pie_core {
         [[nodiscard]] size_t get_num_free_pages() const;
 
     private:
-        // Forward declaration of the private implementation details
-        struct FreeNode;
+        struct FreeNode {
+            uint32_t page_index;
+            FreeNode* next; // Pointer to the next free node
+        };
 
         std::vector<KVPage> page_pool_; // Owns the pages
         std::vector<FreeNode> node_pool_; // Nodes for the free list stack

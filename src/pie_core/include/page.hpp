@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <atomic>
 #include <cassert>
-
+#include <utility>
 
 namespace mx = mlx::core;
 
@@ -15,8 +15,9 @@ namespace pie_core {
     static_assert((TOKEN_CAPACITY_PER_PAGE & (TOKEN_CAPACITY_PER_PAGE-1)) == 0,
                   "TOKENS_PER_PAGE must be a power of two");
 
-    alignas(64) struct KVPage {
+    struct alignas(64) KVPage {
 
+        // --- Constructor ---
         KVPage(
             int32_t num_heads,
             int32_t head_dim,
@@ -36,10 +37,32 @@ namespace pie_core {
 
         }
 
-        // delete copy constructor and assignment operator
+        // --- Move Constructor ---
+        KVPage(KVPage&& other) noexcept
+            : num_heads_(other.num_heads_),
+            head_dim_(other.head_dim_),
+            key_cache_(std::move(other.key_cache_)),
+            value_cache_(std::move(other.value_cache_)),
+            key_cache_scale_(std::move(other.key_cache_scale_)),
+            value_cache_scale_(std::move(other.value_cache_scale_)),
+            page_id_(other.page_id_)
+        {
+            num_tokens_.store(
+                other.num_tokens_.load(std::memory_order_relaxed),
+                std::memory_order_relaxed
+            );
+            ref_count_.store(
+                other.ref_count_.load(std::memory_order_relaxed),
+                std::memory_order_relaxed
+            );
+        }
+
+        // --- Delete Copy and Move Assignment ---
         KVPage(const KVPage&) = delete;
         KVPage& operator=(const KVPage&) = delete;
+        KVPage& operator=(KVPage&&) noexcept = delete;
 
+        // --- Getters ---
         [[nodiscard]] int32_t num_heads()   const noexcept { return num_heads_;              }
         [[nodiscard]] int32_t head_dim()    const noexcept { return head_dim_;               }
         [[nodiscard]] int32_t page_id()     const noexcept { return page_id_;                }

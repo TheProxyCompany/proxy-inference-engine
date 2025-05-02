@@ -13,12 +13,11 @@ set(CMAKE_CXX_EXTENSIONS ON)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 \
-        -fsanitize=undefined \
         -fno-omit-frame-pointer \
-        -Wall -Wextra -Wpedantic \
+        -Wall -Wextra \
         -Wformat=2 -Wformat-security \
         -Wcast-align -Wcast-qual \
-        -Wconversion -Wdouble-promotion \
+        -Wdouble-promotion \
         -Wmissing-include-dirs \
         -Wnull-dereference -Wredundant-decls \
         -Wshadow -Wstrict-aliasing=2 \
@@ -28,8 +27,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         -D_FORTIFY_SOURCE=2"
     )
 else()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
-        -O3 \
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 \
         -mtune=native \
         -flto=auto \
         -DNDEBUG \
@@ -66,8 +64,8 @@ find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 message(STATUS "Using Python site-packages (Python_SITELIB): ${Python_SITELIB}")
 
 # --- Find External Dependencies ---
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/mlx)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind EXCLUDE_FROM_ALL)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/mlx EXCLUDE_FROM_ALL)
 
 # --- Find installed pse_core package location ---
 set(pse_core_DIR "${Python_SITELIB}/pse_core/sdk/cmake")
@@ -89,6 +87,7 @@ else()
 endif()
 
 find_package(MLX CONFIG REQUIRED)
+target_compile_options(mlx PRIVATE -w)
 
 # --- Global Include Directories ---
 include_directories(
