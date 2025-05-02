@@ -9,7 +9,7 @@ repos:
     rev: v0.4.8
     hooks:
     -   id: ruff # Linter
-        args: [--fix, --exit-non-zero-on-fix]
+        args: [--fix]
     -   id: ruff-format # Formatter
 
 -   repo: local
