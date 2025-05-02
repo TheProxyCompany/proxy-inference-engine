@@ -1,0 +1,33 @@
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0 # Use the latest stable tag
+    hooks:
+    -   id: check-yaml
+    -   id: end-of-file-fixer
+    -   id: trailing-whitespace
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.8
+    hooks:
+    -   id: ruff # Linter
+        args: [--fix, --exit-non-zero-on-fix]
+    -   id: ruff-format # Formatter
+
+-   repo: local
+    hooks:
+    -   id: pytest-pie
+        name: Run Python Tests (pytest)
+        entry: pytest # Assumes pytest is installed in the environment
+        language: system # Use the system's pytest
+        types: [python]
+        pass_filenames: false
+        always_run: true
+
+-   repo: local
+    hooks:
+    -   id: ctest-pie
+        name: Run C++ Tests (ctest)
+        entry: bash -c 'cd build && ctest -C $(grep "CMAKE_BUILD_TYPE:STRING=" CMakeCache.txt | cut -d "=" -f2) --output-on-failure && cd ..'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [push]

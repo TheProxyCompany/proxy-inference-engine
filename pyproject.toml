@@ -46,6 +46,7 @@ dev = [
     "build",
     "twine",
     "ruff",
+    "pre-commit"
 ]
 
 [project.urls]
