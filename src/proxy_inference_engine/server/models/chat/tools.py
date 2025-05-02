@@ -27,8 +27,12 @@ class ChatCompletionToolUsage(BaseModel):
     class UsedFunction(BaseModel):
         """Represents a function that was used in a chat completion."""
 
-        name: str = Field(description="The name of the function to call.")
+        name: str | None = Field(
+            default=None,
+            description="The name of the function to call."
+        )
         arguments: str = Field(
+            default="",
             description="The arguments to pass to the function. JSON encoded."
         )
 

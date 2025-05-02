@@ -43,7 +43,7 @@ class Content:
         return Content(InteractionType.TEXT, content)
 
     @staticmethod
-    def tool_call(name: str, arguments: dict[str, Any]) -> Content:
+    def tool_call(name: str | None, arguments: dict[str, Any]) -> Content:
         return Content(
             InteractionType.TOOL_CALL, {"name": name, "arguments": arguments}
         )

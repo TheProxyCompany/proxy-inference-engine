@@ -174,3 +174,4 @@ cython_debug/
 .pypirc
 *.lock
 .cursor
+.py-build-cmake_cache/

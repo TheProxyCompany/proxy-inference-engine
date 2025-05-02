@@ -64,7 +64,6 @@ def create_app() -> FastAPI:
             content={"detail": f"Inference operation failed: {exc}"},
         )
 
-    # Add other exception handlers if needed (e.g., for validation errors)
     logger.info("Exception handlers registered.")
 
     # --- Include Routers ---
