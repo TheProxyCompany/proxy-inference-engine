@@ -89,11 +89,25 @@ ${LLVM_COV_CMD} show \
     exit 1
 }
 
-# --- Cleanup ---
-rm -f "${PROFDATA_FILE}"
+# --- Generate Text Report ---
+echo "Generating text summary report..."
+${LLVM_COV_CMD} report \
+    "${TEST_EXE_PATH}" \
+    -instr-profile="${PROFDATA_FILE}" \
+    --ignore-filename-regex='.*\.hpp' \
+    --ignore-filename-regex='.*external.*' \
+    --ignore-filename-regex='.*tests/cpp.*' \
+    --ignore-filename-regex='/opt/homebrew/.*' \
+    --ignore-filename-regex='/Applications/Xcode.app/.*' \
+    --show-region-summary=false \
+    --show-instantiation-summary=false || {
+    echo "Error: llvm-cov report failed." >&2
+    exit 1
+}
 
 # --- Finish ---
 echo
 echo "--- HTML Coverage report generated in '${HTML_REPORT_DIR}/index.html' ---"
+echo "--- Profdata file preserved at '${PROFDATA_FILE}' for further analysis ---"
 
 exit 0

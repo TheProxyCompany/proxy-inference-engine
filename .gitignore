@@ -176,4 +176,4 @@ cython_debug/
 .cursor
 .py-build-cmake_cache/
 
-**/.claude/settings.local.json
+.claude
