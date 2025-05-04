@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <cassert>
 
-#include "memory/page_allocator.hpp"
+#include "engine/page_allocator.hpp"
 #include "sequence.hpp"
 
 namespace mx = mlx::core;
