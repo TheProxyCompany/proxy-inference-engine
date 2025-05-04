@@ -55,7 +55,7 @@ endif()
 # Build type configuration
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
-    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release")
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "Coverage")
 endif()
 
 # --- Python Configuration ---
@@ -126,6 +126,13 @@ target_link_libraries(${CORE_LIB_NAME} PUBLIC
     mlx
 )
 
+target_compile_options(${CORE_LIB_NAME} PRIVATE
+    $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
+)
+target_link_options(${CORE_LIB_NAME} PRIVATE
+    $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
+)
+
 # --- Build Metal Library ---
 if(MLX_BUILD_METAL)
     message(STATUS "Configuring Metal library build for pie_core")
@@ -154,6 +161,13 @@ target_link_libraries(
         ${CORE_LIB_NAME}
 )
 
+target_compile_options(${EXTENSION_NAME} PRIVATE
+    $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
+)
+target_link_options(${EXTENSION_NAME} PRIVATE
+    $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
+)
+
 target_compile_definitions(
     ${EXTENSION_NAME}
     PRIVATE
@@ -173,6 +187,13 @@ endif()
 
 add_executable(${ENGINE_EXE_NAME} ${PIE_ENGINE_MAIN_SRC})
 target_link_libraries(${ENGINE_EXE_NAME} PRIVATE ${CORE_LIB_NAME})
+
+target_compile_options(${ENGINE_EXE_NAME} PRIVATE
+    $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
+)
+target_link_options(${ENGINE_EXE_NAME} PRIVATE
+    $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
+)
 
 # --- Installation ---
 install(

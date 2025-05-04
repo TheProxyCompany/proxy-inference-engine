@@ -60,8 +60,6 @@ PageAllocator::PageAllocator(
     // --- 3. Set the atomic head_ pointer ---
     if (num_pages > 0) {
         head_.store(&node_pool_[0], std::memory_order_relaxed);
-    } else {
-        head_.store(nullptr, std::memory_order_relaxed); // Should not happen due to check above
     }
 }
 

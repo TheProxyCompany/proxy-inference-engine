@@ -175,3 +175,5 @@ cython_debug/
 *.lock
 .cursor
 .py-build-cmake_cache/
+
+.claude
