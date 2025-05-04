@@ -99,10 +99,14 @@ include_directories(
 )
 
 # --- Source Files, Module Definition, Target Properties ---
-set(PIE_CORE_LIB_SRC
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/page_allocator.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/paged_attention.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/scheduler.cpp"
+file(GLOB_RECURSE PIE_CORE_LIB_SRC CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/memory/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/models/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/models/layers/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/samplers/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ipc/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/utils/*.cpp"
 )
 
 # Define source for Python bindings
@@ -113,7 +117,10 @@ set(PIE_ENGINE_MAIN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
 add_library(${CORE_LIB_NAME} STATIC ${PIE_CORE_LIB_SRC})
 
-target_include_directories(${CORE_LIB_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(${CORE_LIB_NAME} PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
 
 target_link_libraries(${CORE_LIB_NAME} PUBLIC
     ${PSE_CORE_LINK_TARGET}

@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "page_allocator.hpp"
+#include "memory/page_allocator.hpp"
 
 using namespace pie_core;
 

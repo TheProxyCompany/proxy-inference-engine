@@ -10,7 +10,7 @@
 #include <sys/event.h> // kqueue
 #include <csignal>    // signal handling
 
-#include "ipc_defs.hpp"
+#include "ipc/ipc_defs.hpp"
 
 // --- Global variables (simplify for now, use classes later) ---
 void* shm_ptr = nullptr;

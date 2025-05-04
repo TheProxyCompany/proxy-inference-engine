@@ -1,5 +1,5 @@
 
-#include "scheduler.hpp"
+#include "engine/scheduler.hpp"
 
 namespace mx = mlx::core;
 
