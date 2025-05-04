@@ -31,14 +31,14 @@ chat_router = APIRouter()
 
 @chat_router.post(
     "/chat/completions",
-    response_model=ChatCompletionResponse | StreamingResponse,
+    response_model=None,
     summary="Create a chat completion",
     tags=["Chat"],
 )
 async def handle_completion_request(
     request: ChatCompletionRequest,
     engine: InferenceEngine = Depends(get_inference_engine),  # noqa: B008
-) -> ChatCompletionResponse | StreamingResponse:
+) -> dict[str, Any] | StreamingResponse:
     """
     Handles requests to the `/v1/chat/completions` endpoint.
     """
@@ -50,8 +50,12 @@ async def handle_completion_request(
 
     tools = [tool.to_dict() for tool in request.tools] if request.tools else None
     tool_choice = request.tool_choice.to_dict() if request.tool_choice else None
-    response_format = request.response_format.to_dict() if request.response_format else None
-    stream_options = request.stream_options.model_dump() if request.stream_options else None
+    response_format = (
+        request.response_format.to_dict() if request.response_format else None
+    )
+    stream_options = (
+        request.stream_options.model_dump() if request.stream_options else None
+    )
 
     inference_kwargs = {
         "max_completion_tokens": request.max_completion_tokens,
@@ -80,6 +84,7 @@ async def handle_completion_request(
                 input_interactions,
                 inference_kwargs,
             )
+            return response
         else:
             response = await handle_non_streaming_completion_request(
                 request.model,
@@ -88,6 +93,7 @@ async def handle_completion_request(
                 inference_kwargs,
             )
             logger.info(f"Chat completion request successful. ID: {response.id}")
+            return response.model_dump()
     except InferenceError as e:
         logger.error(f"Inference error processing request: {e}", exc_info=True)
         raise HTTPException(
@@ -106,8 +112,6 @@ async def handle_completion_request(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred during completion.",
         ) from e
-
-    return response
 
 
 async def handle_non_streaming_completion_request(
@@ -193,14 +197,14 @@ async def handle_streaming_completion_request(
                         generated_tokens,
                         generated_logprobs if collect_logprobs else None,
                         engine.tokenizer.decode,
-                    )
+                    ),
                 )
 
                 yield ChatCompletionChunk(
                     id=chat_completion_id,
                     created=created_at,
                     model=model,
-                    choices=[delta]
+                    choices=[delta],
                 ).model_dump_json()
         except StopIteration as exc:
             finish_reason = exc.value
@@ -221,7 +225,7 @@ async def handle_streaming_completion_request(
                     finish_reason=finish_reason,
                     logprobs=None,
                 )
-            ]
+            ],
         ).model_dump_json()
 
         if include_usage:
@@ -235,7 +239,7 @@ async def handle_streaming_completion_request(
                     input_tokens=encoded_prompt.size,
                     output_tokens=len(generated_tokens),
                     total_tokens=encoded_prompt.size + len(generated_tokens),
-                )
+                ),
             ).model_dump_json()
 
     response = StreamingResponse(
