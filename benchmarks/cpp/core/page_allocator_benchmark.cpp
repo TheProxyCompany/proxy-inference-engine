@@ -30,39 +30,39 @@ using namespace pie_core;
 const unsigned int MAX_HARDWARE_THREADS = std::max(1u, std::thread::hardware_concurrency());
 
 #if defined(TRACY_ENABLE)
-using BenchAllocatorType = profiling::ProfiledAllocatorWrapper<PageAllocator>;
+using BenchAllocatorType = profiling::ProfiledAllocatorWrapper<engine::PageAllocator>;
 #else
-using BenchAllocatorType = PageAllocator;
+using BenchAllocatorType = engine::PageAllocator;
 #endif
 
 template<typename... Args>
 auto create_bench_allocator(Args&&... args) {
     #if defined(TRACY_ENABLE)
-    static PageAllocator actual_allocator(std::forward<Args>(args)...);
+    static engine::PageAllocator actual_allocator(std::forward<Args>(args)...);
     return BenchAllocatorType(actual_allocator);
     #else
     return BenchAllocatorType(std::forward<Args>(args)...);
     #endif
 }
 
-PageAllocator& get_global_allocator(size_t num_pages, int32_t num_heads, int32_t head_dim) {
-    static PageAllocator global_allocator(num_pages, num_heads, head_dim);
+engine::PageAllocator& get_global_allocator(size_t num_pages, int32_t num_heads, int32_t head_dim) {
+    static engine::PageAllocator global_allocator(num_pages, num_heads, head_dim);
     return global_allocator;
 }
 
 #if defined(TRACY_ENABLE)
-BenchAllocatorType wrap_global_allocator(PageAllocator& allocator) {
+BenchAllocatorType wrap_global_allocator(engine::PageAllocator& allocator) {
     return BenchAllocatorType(allocator);
 }
 #else
-PageAllocator& wrap_global_allocator(PageAllocator& allocator) {
+engine::PageAllocator& wrap_global_allocator(engine::PageAllocator& allocator) {
     return allocator;
 }
 #endif
 
 double calculate_total_memory_mb(size_t num_pages, int32_t num_heads, int32_t head_dim) {
     constexpr double BYTES_PER_MB = 1024.0 * 1024.0;
-    const size_t bytes_per_page = TOKEN_CAPACITY_PER_PAGE *
+    const size_t bytes_per_page = engine::TOKEN_CAPACITY_PER_PAGE *
                                   static_cast<size_t>(num_heads) *
                                   static_cast<size_t>(head_dim) *
                                   sizeof(int8_t) * 2;
@@ -118,7 +118,7 @@ static void BM_PageAllocator_SingleThreadedAllocation(benchmark::State& state) {
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * static_cast<int64_t>(num_pages) * 2);
     state.SetBytesProcessed(
         static_cast<int64_t>(state.iterations()) *
-        static_cast<int64_t>(num_pages * TOKEN_CAPACITY_PER_PAGE * num_heads * head_dim * sizeof(int8_t) * 2)
+        static_cast<int64_t>(num_pages * engine::TOKEN_CAPACITY_PER_PAGE * num_heads * head_dim * sizeof(int8_t) * 2)
     );
 }
 
@@ -130,7 +130,7 @@ static void BM_PageAllocator_MultiThreadedAllocation(benchmark::State& state) {
     const int32_t head_dim = static_cast<int32_t>(state.range(3));
     const int actual_threads = state.threads();
 
-    PageAllocator& global_allocator = get_global_allocator(num_pages, num_heads, head_dim);
+    engine::PageAllocator& global_allocator = get_global_allocator(num_pages, num_heads, head_dim);
 
     state.counters["TotalMemory_MB"] = calculate_total_memory_mb(num_pages, num_heads, head_dim);
     state.counters["ThreadCount"] = actual_threads;
@@ -148,7 +148,7 @@ static void BM_PageAllocator_MultiThreadedAllocation(benchmark::State& state) {
         #if defined(TRACY_ENABLE)
         BenchAllocatorType bench_allocator = wrap_global_allocator(global_allocator);
         #else
-        PageAllocator& bench_allocator = wrap_global_allocator(global_allocator);
+        engine::PageAllocator& bench_allocator = wrap_global_allocator(global_allocator);
         #endif
 
         std::vector<uint32_t> thread_pages;
@@ -184,7 +184,7 @@ static void BM_PageAllocator_MultiThreadedAllocation(benchmark::State& state) {
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * static_cast<int64_t>(num_pages) * 2);
     state.SetBytesProcessed(
         static_cast<int64_t>(state.iterations()) *
-        static_cast<int64_t>(num_pages * TOKEN_CAPACITY_PER_PAGE * num_heads * head_dim * sizeof(int8_t) * 2)
+        static_cast<int64_t>(num_pages * engine::TOKEN_CAPACITY_PER_PAGE * num_heads * head_dim * sizeof(int8_t) * 2)
     );
 }
 
@@ -296,7 +296,7 @@ static void BM_PageAllocator_ReferenceCountingScenario(benchmark::State& state) 
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * static_cast<int64_t>(num_pages) * 3);
      state.SetBytesProcessed(
          static_cast<int64_t>(state.iterations()) *
-         static_cast<int64_t>(num_pages * TOKEN_CAPACITY_PER_PAGE * num_heads * head_dim * sizeof(int8_t) * 2)
+         static_cast<int64_t>(num_pages * engine::TOKEN_CAPACITY_PER_PAGE * num_heads * head_dim * sizeof(int8_t) * 2)
      );
 }
 
@@ -316,7 +316,7 @@ static void BM_PageAllocator_SimulateLLMInference(benchmark::State& state) {
     const int sequence_length = static_cast<int>(state.range(4));
     const int benchmark_threads = state.threads();
 
-    PageAllocator& global_allocator = get_global_allocator(num_pages, num_heads, head_dim);
+    engine::PageAllocator& global_allocator = get_global_allocator(num_pages, num_heads, head_dim);
 
     struct Session {
         std::vector<uint32_t> pages;
@@ -361,7 +361,7 @@ static void BM_PageAllocator_SimulateLLMInference(benchmark::State& state) {
         #if defined(TRACY_ENABLE)
         BenchAllocatorType thread_allocator = wrap_global_allocator(global_allocator);
         #else
-        PageAllocator& thread_allocator = wrap_global_allocator(global_allocator);
+        engine::PageAllocator& thread_allocator = wrap_global_allocator(global_allocator);
         #endif
         int thread_idx = state.thread_index();
 
@@ -387,7 +387,7 @@ static void BM_PageAllocator_SimulateLLMInference(benchmark::State& state) {
 
                 session.tokens_generated++;
 
-                if (session.pages.empty() || (session.tokens_generated > 0 && session.tokens_generated % TOKEN_CAPACITY_PER_PAGE == 1)) {
+                if (session.pages.empty() || (session.tokens_generated > 0 && session.tokens_generated % engine::TOKEN_CAPACITY_PER_PAGE == 1)) {
                      PIE_PROFILE_ZONE("Allocate New Page");
                      auto page_id = thread_allocator.allocate_page();
                     if (page_id) {
@@ -478,7 +478,7 @@ static void BM_PageAllocator_SimulateLLMInference(benchmark::State& state) {
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * static_cast<int64_t>(benchmark_threads) * static_cast<int64_t>(sequence_length));
     state.SetBytesProcessed(
         static_cast<int64_t>(state.iterations()) *
-        static_cast<int64_t>(num_pages * TOKEN_CAPACITY_PER_PAGE * num_heads * head_dim * sizeof(int8_t) * 2)
+        static_cast<int64_t>(num_pages * engine::TOKEN_CAPACITY_PER_PAGE * num_heads * head_dim * sizeof(int8_t) * 2)
     );
 }
 

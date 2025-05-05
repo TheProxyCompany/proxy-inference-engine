@@ -20,7 +20,7 @@ class ProfiledAllocatorWrapper {
 
         // Calculate based on the first page's dimensions (all pages should be identical)
         const auto& first_page = base_allocator_.get_page(0);
-        return TOKEN_CAPACITY_PER_PAGE * first_page.num_heads() * first_page.head_dim() * 2 * sizeof(int8_t); // Both key and value
+        return engine::TOKEN_CAPACITY_PER_PAGE * first_page.num_heads() * first_page.head_dim() * 2 * sizeof(int8_t); // Both key and value
     }
 
 public:
@@ -71,12 +71,12 @@ public:
         base_allocator_.add_ref(page_id);
     }
 
-    KVPage& get_page(uint32_t page_id) {
+    engine::KVPage& get_page(uint32_t page_id) {
         // Don't profile simple getters unless needed for high-frequency calls
         return base_allocator_.get_page(page_id);
     }
 
-    const KVPage& get_page(uint32_t page_id) const {
+    const engine::KVPage& get_page(uint32_t page_id) const {
         return base_allocator_.get_page(page_id);
     }
 
@@ -113,13 +113,13 @@ public:
 };
 
 // ProfiledPageAllocator is a specialization of the wrapper for PageAllocator
-using ProfiledPageAllocator = ProfiledAllocatorWrapper<PageAllocator>;
+using ProfiledPageAllocator = ProfiledAllocatorWrapper<engine::PageAllocator>;
 
 // --- Conditional Type alias ---
 #if defined(TRACY_ENABLE)
-    using BenchAllocatorType = ProfiledAllocatorWrapper<PageAllocator>;
+    using BenchAllocatorType = ProfiledAllocatorWrapper<engine::PageAllocator>;
 #else
-    using BenchAllocatorType = PageAllocator; // Use the real one if Tracy is off
+    using BenchAllocatorType = engine::PageAllocator; // Use the real one if Tracy is off
 #endif
 
 } // namespace pie_core::profiling

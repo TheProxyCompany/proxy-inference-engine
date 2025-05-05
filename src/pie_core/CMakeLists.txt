@@ -136,9 +136,12 @@ set(PIE_ENGINE_MAIN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
 add_library(${CORE_LIB_NAME} STATIC ${PIE_CORE_LIB_SRC})
 
-target_include_directories(${CORE_LIB_NAME} PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+target_include_directories(${CORE_LIB_NAME}
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_link_libraries(${CORE_LIB_NAME} PUBLIC

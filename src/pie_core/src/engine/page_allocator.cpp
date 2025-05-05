@@ -3,7 +3,7 @@
 #include <numeric>
 #include <thread>
 
-namespace pie_core {
+namespace pie_core::engine {
 
 PageAllocator::PageAllocator(
     size_t num_pages,
@@ -145,7 +145,7 @@ PageAllocator::FreeNode* PageAllocator::pop_free_list() {
                std::memory_order_acquire
            )) {
         // Brief pause/yield to reduce contention
-        std::this_thread::yield();
+        // std::this_thread::yield();
     }
 
     if (current_head != nullptr) {

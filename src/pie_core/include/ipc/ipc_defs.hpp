@@ -13,8 +13,8 @@ namespace pie_core::ipc {
         uint64_t request_id{0};
         uint64_t prompt_shm_offset{0}; // Offset in bulk SHM for prompt string
         uint64_t prompt_shm_size{0};   // Size of prompt string in SHM
-        SamplingParams sampling_params;
-        LogitsParams logits_params;
+        sequence::SamplingParams sampling_params;
+        sequence::LogitsParams logits_params;
     };
 
     constexpr size_t NUM_SLOTS = 1024; // Power of 2 for efficient ring buffer indexing

@@ -30,13 +30,13 @@ public:
 // --------------------------------------------------------------------------
 namespace {
 
-PageAllocator make_allocator(size_t pages) {
-    return PageAllocator(pages,
+engine::PageAllocator make_allocator(size_t pages) {
+    return engine::PageAllocator(pages,
                          PageAllocatorTest::DEFAULT_NUM_HEADS,
                          PageAllocatorTest::DEFAULT_HEAD_DIM);
 }
 
-[[nodiscard]] std::vector<uint32_t> allocate_pages(PageAllocator &alloc,
+[[nodiscard]] std::vector<uint32_t> allocate_pages(engine::PageAllocator &alloc,
                                                    size_t n) {
     std::vector<uint32_t> ids;
     ids.reserve(n);
@@ -48,7 +48,7 @@ PageAllocator make_allocator(size_t pages) {
     return ids;
 }
 
-void free_pages(PageAllocator &alloc, const std::vector<uint32_t> &ids) {
+void free_pages(engine::PageAllocator &alloc, const std::vector<uint32_t> &ids) {
     for (auto id : ids) alloc.free_page(id);
 }
 
@@ -62,11 +62,11 @@ TEST_F(PageAllocatorTest, ConstructorValidArgs) {
 }
 
 TEST_F(PageAllocatorTest, ConstructorInvalidArgs) {
-    EXPECT_THROW(PageAllocator(0, DEFAULT_NUM_HEADS, DEFAULT_HEAD_DIM),
+    EXPECT_THROW(engine::PageAllocator(0, DEFAULT_NUM_HEADS, DEFAULT_HEAD_DIM),
                  std::invalid_argument);
-    EXPECT_THROW(PageAllocator(TINY_POOL_SIZE, 0, DEFAULT_HEAD_DIM),
+    EXPECT_THROW(engine::PageAllocator(TINY_POOL_SIZE, 0, DEFAULT_HEAD_DIM),
                  std::invalid_argument);
-    EXPECT_THROW(PageAllocator(TINY_POOL_SIZE, DEFAULT_NUM_HEADS, 0),
+    EXPECT_THROW(engine::PageAllocator(TINY_POOL_SIZE, DEFAULT_NUM_HEADS, 0),
                  std::invalid_argument);
 }
 

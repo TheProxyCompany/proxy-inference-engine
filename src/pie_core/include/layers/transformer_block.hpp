@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/batch_details.hpp"
 #include "layers/attention.hpp"
 #include "layers/mlp.hpp"
 #include "layers/norm.hpp"

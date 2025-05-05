@@ -3,17 +3,11 @@
 
 namespace mx = mlx::core;
 
-namespace pie_core {
+namespace pie_core::engine {
 
-Scheduler::Scheduler()
-    : page_allocator_(1000, 12, 64)
-{
-
-}
-
-void Scheduler::step() {
-
-}
-
+    bool Scheduler::step() {
+        // TODO: Implement
+        return true;
+    }
 
 }

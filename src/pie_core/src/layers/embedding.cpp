@@ -7,7 +7,11 @@ namespace pie_core::layers {
     Embedding::Embedding(int num_embeddings, int dims)
         : num_embeddings_(num_embeddings),
           dims_(dims),
-          weights_(mx::random::normal({num_embeddings_, dims_}, 0.0, std::sqrt(1.0 / dims_)))
+          weights_(mx::random::normal(
+            {num_embeddings, dims},
+            0.0,
+            std::sqrt(1.0 / dims)
+          ))
     {}
 
     mx::array Embedding::forward(const mx::array& x) const {

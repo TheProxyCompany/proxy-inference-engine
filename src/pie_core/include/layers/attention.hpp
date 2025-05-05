@@ -1,7 +1,8 @@
 #pragma once
 
 #include "layers/linear.hpp"
-#include "layers/rope.hpp" // Assuming RoPE is used
+#include "layers/rope.hpp"
+#include "engine/batch_details.hpp"
 #include <mlx/mlx.h>
 #include <string>
 #include <vector>
