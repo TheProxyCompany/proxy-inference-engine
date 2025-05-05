@@ -123,8 +123,8 @@ file(GLOB_RECURSE PIE_CORE_LIB_SRC CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/layers/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/logit_processors/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/models/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/models/**/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/samplers/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/utils/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/sequence/*.cpp"
 )
 

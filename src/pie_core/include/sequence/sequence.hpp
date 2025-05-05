@@ -30,6 +30,19 @@ namespace pie_core {
     // --- Sequence Class ---
     class Sequence {
         public:
+
+            Sequence(
+                uint64_t sequence_id,
+                SequenceStatus status,
+                uint64_t arrival_timestamp_ns,
+                const std::vector<int32_t>& tokens,
+                size_t prompt_len,
+                const SamplingParams& sampling_params,
+                const LogitsParams& logits_params,
+                const StopCriteria& stop_criteria,
+                const IPCHandles& ipc_handles
+            );
+
             const uint64_t sequence_id;
             SequenceStatus status;
             const uint64_t arrival_timestamp_ns;
