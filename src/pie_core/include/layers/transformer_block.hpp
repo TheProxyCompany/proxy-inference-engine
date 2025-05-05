@@ -14,6 +14,13 @@ namespace pie_core { struct BatchDetails; }
 
 namespace pie_core::layers {
 
+    struct TransformerBlockConfig {
+        int hidden_dims;       // For RMSNorm, MLP
+        int mlp_hidden_dims;   // For MLP
+        float norm_eps;        // For RMSNorm
+        AttentionConfig attn_config; // For Attention sub-layer
+    };
+
     /**
      * @brief Represents a single block within a Transformer architecture (Attention + MLP).
      */
@@ -21,11 +28,9 @@ namespace pie_core::layers {
     public:
         /**
          * @brief Constructs a TransformerBlock.
-         * @param config // Pass necessary parameters directly or via a struct like LlamaConfig
-         *        e.g., int hidden_dims, int num_heads, int num_kv_heads, int mlp_hidden_dims,
-         *              const RoPEConfig& rope_config, float norm_eps
+         * @param config Configuration for the TransformerBlock.
          */
-        explicit TransformerBlock(/* config parameters */);
+        explicit TransformerBlock(const TransformerBlockConfig& config);
 
         // Rule of 5/6
         TransformerBlock(const TransformerBlock&) = delete;
@@ -40,8 +45,8 @@ namespace pie_core::layers {
          * @param batch_details Contains necessary info passed down to the Attention layer.
          * @return Output tensor from the block.
          */
-        mx::array forward(const mx::array& hidden_state, const pie_core::BatchDetails& batch_details) const;
-        mx::array operator()(const mx::array& hidden_state, const pie_core::BatchDetails& batch_details) const {
+        mx::array forward(const mx::array& hidden_state, const pie_core::engine::BatchDetails& batch_details) const;
+        mx::array operator()(const mx::array& hidden_state, const pie_core::engine::BatchDetails& batch_details) const {
             return forward(hidden_state, batch_details);
         }
 
@@ -61,9 +66,9 @@ namespace pie_core::layers {
 
     private:
         // Explicit member layers
-        RMSNorm input_layernorm_; // Renamed from attention_norm for clarity
+        RMSNorm input_layernorm_;
         Attention self_attn_;
-        RMSNorm post_attention_layernorm_; // Renamed from mlp_norm for clarity
+        RMSNorm post_attention_layernorm_;
         MLP mlp_;
     };
 

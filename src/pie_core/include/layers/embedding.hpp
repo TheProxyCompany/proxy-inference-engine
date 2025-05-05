@@ -58,7 +58,7 @@ namespace pie_core::layers {
         void collect_parameters(std::vector<mx::array*>& params);
 
     private:
-        mx::array weight_;
+        mx::array weights_;
         int num_embeddings_;
         int dims_;
     };

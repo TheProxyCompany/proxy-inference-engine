@@ -45,11 +45,6 @@ namespace pie_core::layers {
         mx::array forward(const mx::array& x, int offset = 0) const;
         mx::array operator()(const mx::array& x, int offset = 0) const { return forward(x, offset); }
 
-        void load_weights(const std::unordered_map<std::string, mx::array>& weights,
-                          const std::string& prefix) { /* No-op */ }
-
-        void collect_parameters(std::vector<mx::array*>& params) { /* No-op */ }
-
     private:
         RoPEConfig config_;
     };

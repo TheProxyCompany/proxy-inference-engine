@@ -19,7 +19,7 @@ namespace pie_core::layers {
          * @brief Constructs a Linear layer.
          * @param input_dims Dimensionality of the input features.
          * @param output_dims Dimensionality of the output features.
-         * @param bias If true, add a learnable bias. Default: true.
+         * @param bias Whether to include a bias term.
          */
         Linear(int input_dims, int output_dims, bool bias = true);
 
@@ -42,8 +42,7 @@ namespace pie_core::layers {
          * @param weights Map containing all model weights.
          * @param prefix Prefix for keys belonging to this layer (e.g., "mlp.gate_proj.").
          */
-        void load_weights(const std::unordered_map<std::string, mx::array>& weights,
-                          const std::string& prefix);
+        void load_weights(const std::unordered_map<std::string, mx::array>& weights, const std::string& prefix);
 
         /**
          * @brief Appends pointers to the layer's parameters (weight, bias) to the vector.
@@ -52,8 +51,9 @@ namespace pie_core::layers {
         void collect_parameters(std::vector<mx::array*>& params);
 
     private:
-        mx::array weight_;
+        mx::array weights_;
         std::optional<mx::array> bias_;
+        bool should_bias_;
     };
 
 } // namespace pie_core::layers

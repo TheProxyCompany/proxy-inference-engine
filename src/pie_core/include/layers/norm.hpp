@@ -21,7 +21,6 @@ namespace pie_core::layers {
          */
         RMSNorm(int dims, float eps = 1e-5);
 
-        // Rule of 5/6
         RMSNorm(const RMSNorm&) = delete;
         RMSNorm& operator=(const RMSNorm&) = delete;
         RMSNorm(RMSNorm&&) = default;
@@ -52,7 +51,32 @@ namespace pie_core::layers {
 
     private:
         float eps_;
-        mx::array weight_;
+        mx::array weights_;
+    };
+
+    class LayerNorm {
+    public:
+        LayerNorm(int dims, float eps = 1e-5, bool bias = true);
+
+        LayerNorm(const LayerNorm&) = delete;
+        LayerNorm& operator=(const LayerNorm&) = delete;
+        LayerNorm(LayerNorm&&) = default;
+        LayerNorm& operator=(LayerNorm&&) = default;
+        ~LayerNorm() = default;
+
+        mx::array forward(const mx::array& x) const;
+        mx::array operator()(const mx::array& x) const { return forward(x); }
+
+        void load_weights(const std::unordered_map<std::string, mx::array>& weights,
+                          const std::string& prefix);
+
+        void collect_parameters(std::vector<mx::array*>& params);
+
+    private:
+        float eps_;
+        mx::array weights_;
+        std::optional<mx::array> bias_;
+        bool should_bias_;
     };
 
 } // namespace pie_core::layers

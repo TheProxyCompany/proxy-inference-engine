@@ -50,8 +50,15 @@ namespace pie_core::layers {
          * @param batch_details Contains consolidated block tables, sequence info, etc.
          * @return Output tensor after attention calculation and output projection.
          */
-        mx::array forward(const mx::array& hidden_state, const pie_core::BatchDetails& batch_details) const;
-        mx::array operator()(const mx::array& hidden_state, const pie_core::BatchDetails& batch_details) const {
+        mx::array forward(
+            const mx::array& hidden_state,
+            const pie_core::engine::BatchDetails& batch_details
+        ) const;
+
+        mx::array operator()(
+            const mx::array& hidden_state,
+            const pie_core::engine::BatchDetails& batch_details
+        ) const {
             return forward(hidden_state, batch_details);
         }
 
@@ -70,9 +77,7 @@ namespace pie_core::layers {
         void collect_parameters(std::vector<mx::array*>& params);
 
     private:
-        // --- Config & Calculated ---
         AttentionConfig config_;
-        float scale_; // Calculated from head_dim
 
         // --- Sub-layers ---
         Linear q_proj_;
@@ -85,12 +90,17 @@ namespace pie_core::layers {
         /**
          * @brief Placeholder for the function that prepares inputs and calls the custom Metal kernel.
          * @param queries Queries tensor for the current step.
+         * @param keys Keys tensor computed in this step.
+         * @param values Values tensor computed in this step.
          * @param batch_details Contains block tables and other necessary info.
          * @return Output tensor from the attention mechanism (before o_proj).
          */
+        // In attention.hpp
         mx::array invoke_paged_attention_kernel(
             const mx::array& queries,
-            const pie_core::BatchDetails& batch_details
+            const mx::array& keys,
+            const mx::array& values,
+            const pie_core::engine::BatchDetails& batch_details
         ) const;
     };
 
