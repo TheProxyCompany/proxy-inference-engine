@@ -59,11 +59,29 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # --- Python Configuration ---
+# Force use of virtualenv
 set(Python_VIRTUALENV FIRST)
+set(Python_ROOT_DIR "${CMAKE_SOURCE_DIR}/.venv")
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 message(STATUS "Using Python site-packages (Python_SITELIB): ${Python_SITELIB}")
 
 # --- Find External Dependencies ---
+include(FetchContent)
+FetchContent_Declare(spdlog GIT_REPOSITORY https://github.com/gabime/spdlog.git)
+set(SPDLOG_INSTALL OFF CACHE INTERNAL "")
+set(SPDLOG_BUILD_SHARED OFF CACHE INTERNAL "")
+set(SPDLOG_ENABLE_PCH OFF CACHE INTERNAL "")
+set(SPDLOG_BUILD_EXAMPLE OFF CACHE INTERNAL "")
+set(SPDLOG_BUILD_TESTS OFF CACHE INTERNAL "")
+set(SPDLOG_BUILD_BENCH OFF CACHE INTERNAL "")
+set(SPDLOG_FMT_EXTERNAL OFF CACHE INTERNAL "")
+FetchContent_MakeAvailable(spdlog)
+
+FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git)
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+set(JSON_Install OFF CACHE INTERNAL "")
+FetchContent_MakeAvailable(json)
+
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/mlx EXCLUDE_FROM_ALL)
 
@@ -124,6 +142,8 @@ target_include_directories(${CORE_LIB_NAME} PUBLIC
 target_link_libraries(${CORE_LIB_NAME} PUBLIC
     ${PSE_CORE_LINK_TARGET}
     mlx
+    nlohmann_json
+    spdlog
 )
 
 target_compile_options(${CORE_LIB_NAME} PRIVATE

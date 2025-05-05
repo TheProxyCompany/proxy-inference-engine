@@ -11,7 +11,7 @@ BUILD_DIR="build"
 TEST_EXECUTABLE_NAME="pie_core_tests"
 TEST_EXE_PATH="${BUILD_DIR}/tests/cpp/${TEST_EXECUTABLE_NAME}"
 # Define output paths
-PROFRAW_DIR="${BUILD_DIR}/tests/cpp" # Directory where .profraw files are expected
+PROFRAW_DIR="${BUILD_DIR}/tests/cpp"
 PROFDATA_FILE="${BUILD_DIR}/coverage.profdata"
 HTML_REPORT_DIR="${BUILD_DIR}/coverage_html_report"
 

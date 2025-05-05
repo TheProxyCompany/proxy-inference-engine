@@ -145,8 +145,7 @@ PageAllocator::FreeNode* PageAllocator::pop_free_list() {
                std::memory_order_acquire
            )) {
         // Brief pause/yield to reduce contention
-        // not needed but nice to have j.i.c.
-        // std::this_thread::yield();
+        std::this_thread::yield();
     }
 
     if (current_head != nullptr) {
