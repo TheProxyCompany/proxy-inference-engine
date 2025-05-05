@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace pie_core {
+namespace pie_core::sequence {
 
     struct IPCHandles {
         uint64_t request_channel_id = 0;

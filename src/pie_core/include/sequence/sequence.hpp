@@ -16,7 +16,7 @@
 
 namespace mx = mlx::core;
 
-namespace pie_core {
+namespace pie_core::sequence {
 
     // --- Enums and Structs for Sequence State & Parameters ---
     enum class SequenceStatus {

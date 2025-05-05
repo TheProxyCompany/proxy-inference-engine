@@ -6,7 +6,7 @@
 #include "sequence/sampling_params.hpp"
 #include "sequence/logits_params.hpp"
 
-namespace pie_core {
+namespace pie_core::ipc {
 
     struct alignas(64) RequestSlot {
         std::atomic<uint32_t> state{0}; // 0=FREE, 1=LOCKING, 2=READY
@@ -25,4 +25,4 @@ namespace pie_core {
         std::atomic<uint64_t> producer_idx{0};
     };
 
-} // namespace pie_core
+} // namespace pie_core::ipc

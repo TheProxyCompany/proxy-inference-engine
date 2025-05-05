@@ -3,7 +3,7 @@
 #include <string>
 #include <stdexcept>
 
-namespace pie_core {
+namespace pie_core::models {
 
     struct ModelConfigBase {
         std::string model_type;

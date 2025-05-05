@@ -6,7 +6,7 @@
 
 namespace mx = mlx::core;
 
-namespace pie_core {
+namespace pie_core::sequence {
 
     struct LogitsParams {
         float frequency_penalty = 0.0f;

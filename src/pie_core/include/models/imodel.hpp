@@ -7,7 +7,7 @@
 
 namespace mx = mlx::core;
 
-namespace pie_core {
+namespace pie_core::models {
 
     struct BatchDetails;
 

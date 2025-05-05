@@ -9,7 +9,7 @@ namespace pie_core { class Sequence; }
 
 namespace mx = mlx::core;
 
-namespace pie_core {
+namespace pie_core::logit_processors {
 
     // Abstract base class for all logit processors.
     class ILogitProcessor {
@@ -24,4 +24,4 @@ namespace pie_core {
         ) = 0;
     };
 
-} // namespace pie_core
+} // namespace pie_core::logit_processors

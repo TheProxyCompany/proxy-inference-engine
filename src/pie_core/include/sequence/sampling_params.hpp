@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace pie_core {
+namespace pie_core::sequence {
 
     struct SamplingParams {
         float temperature = 1.0f;

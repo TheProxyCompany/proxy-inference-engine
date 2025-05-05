@@ -5,7 +5,7 @@
 #include <memory>
 #include <stdexcept>
 
-namespace pie_core {
+namespace pie_core::models {
 
     class ModelLoadError : public std::runtime_error {
     public:

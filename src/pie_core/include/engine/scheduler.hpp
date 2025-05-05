@@ -11,7 +11,7 @@ namespace pie_core {
     class IModel;
 }
 
-namespace pie_core {
+namespace pie_core::engine {
 
     /**
      * @brief Orchestrates LLM inference requests, managing batching and resources.

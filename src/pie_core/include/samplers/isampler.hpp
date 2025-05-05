@@ -10,7 +10,7 @@
 
 namespace mx = mlx::core;
 
-namespace pie_core {
+namespace pie_core::samplers {
 
     // Abstract base class for all samplers.
     class ISampler {
@@ -25,4 +25,4 @@ namespace pie_core {
         ) = 0;
     };
 
-} // namespace pie_core
+} // namespace pie_core::samplers

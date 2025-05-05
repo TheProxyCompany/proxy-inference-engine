@@ -3,7 +3,7 @@
 #include <vector>
 #include <cstdint>
 
-namespace pie_core {
+namespace pie_core::sequence {
 
     struct StopCriteria {
         int max_generated_tokens = 1024;
