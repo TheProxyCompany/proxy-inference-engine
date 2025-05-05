@@ -10,7 +10,7 @@
 #include <cassert>
 
 #include "engine/page_allocator.hpp"
-#include "sequence.hpp"
+#include "sequence/sequence.hpp"
 
 namespace mx = mlx::core;
 

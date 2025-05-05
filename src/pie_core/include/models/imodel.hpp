@@ -11,11 +11,15 @@ namespace pie_core {
 
     struct BatchDetails;
 
-    class Model {
+    class IModel {
     public:
-        virtual ~Model() = default;
+        virtual ~IModel() = default;
 
+        // --- Core Inference Method ---
         virtual mx::array forward(const BatchDetails& batch_details) = 0;
+
+        // --- Parameter Management ---
+        virtual std::vector<mx::array*> get_parameters() = 0;
 
         // --- Structural Information for Scheduler/Allocator ---
         virtual int get_num_kv_heads() const noexcept = 0;

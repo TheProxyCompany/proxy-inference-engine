@@ -178,3 +178,4 @@ cython_debug/
 
 .claude
 *.profraw
+.models
