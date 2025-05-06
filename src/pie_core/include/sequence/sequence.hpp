@@ -27,6 +27,15 @@ namespace pie_core::sequence {
         ERROR               // An error occurred during processing
     };
 
+    enum class FinishReason {
+        STOP,       // Stop token
+        LENGTH,     // Max tokens
+        USER,       // User-defined stop sequence
+        MEMORY,     // Memory limit
+        TOOL_USE,   // Tool use
+        INJECTION,  // Injection
+    };
+
     // --- Sequence Class ---
     class Sequence {
         public:

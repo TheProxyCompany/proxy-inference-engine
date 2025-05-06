@@ -67,6 +67,7 @@ message(STATUS "Using Python site-packages (Python_SITELIB): ${Python_SITELIB}")
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/mlx EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog EXCLUDE_FROM_ALL)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers EXCLUDE_FROM_ALL)
 
 find_package(nlohmann_json 3.12.0 REQUIRED)
 find_package(Boost)
@@ -117,6 +118,7 @@ include_directories(
     ${pse_core_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/mlx/mlx
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
@@ -151,6 +153,7 @@ target_include_directories(${CORE_LIB_NAME}
 target_link_libraries(${CORE_LIB_NAME} PUBLIC
     ${PSE_CORE_LINK_TARGET}
     mlx
+    tokenizers_cpp
     nlohmann_json::nlohmann_json
     spdlog::spdlog_header_only
 )

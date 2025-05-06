@@ -4,7 +4,7 @@
 #include "sequence/sampling_params.hpp"
 #include "sequence/logits_params.hpp"
 #include "sequence/stop_criteria.hpp"
-
+#include "ipc/shared_memory_manager.hpp"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -24,7 +24,7 @@ namespace pie_core::ipc {
 
         uint64_t submit_request_to_engine(
             uint64_t request_id,
-            const std::vector<int32_t>& prompt_tokens,
+            const std::string& prompt_string,
             const sequence::SamplingParams& sampling_params,
             const sequence::LogitsParams& logits_params,
             const sequence::StopCriteria& stop_criteria
@@ -53,7 +53,8 @@ namespace pie_core::ipc {
         void cleanup_ipc_resources();
         void trigger_kernel_event();
 
-        uint64_t write_prompt_to_bulk_shm(const std::vector<int32_t>& prompt_tokens);
+        uint64_t IPCProducer::write_prompt_to_bulk_shm(const std::string& prompt_string);
+        std::unique_ptr<SharedMemoryManager> bulk_shm_manager_;
     };
 
     IPCProducer* get_global_ipc_producer();

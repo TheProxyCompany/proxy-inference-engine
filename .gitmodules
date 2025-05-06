@@ -7,3 +7,6 @@
 [submodule "src/pie_core/external/spdlog"]
 	path = src/pie_core/external/spdlog
 	url = https://github.com/gabime/spdlog.git
+[submodule "src/pie_core/external/tokenizers"]
+	path = src/pie_core/external/tokenizers
+	url = https://github.com/mlc-ai/tokenizers-cpp.git
