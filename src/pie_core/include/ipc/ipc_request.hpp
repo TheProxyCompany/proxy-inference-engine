@@ -38,7 +38,7 @@ namespace pie_core::ipc {
 
     constexpr size_t REQUEST_QUEUE_NUM_SLOTS = 1024;
     constexpr size_t REQUEST_QUEUE_SHM_SIZE = REQUEST_QUEUE_NUM_SLOTS * sizeof(RequestSlot);
-    const char* const REQUEST_QUEUE_SHM_NAME = "/pie_request_slots";
+    constexpr const char* REQUEST_QUEUE_SHM_NAME = "/pie_request_slots";
 
     struct alignas(64) RequestQueueControl {
         std::atomic<uint64_t> producer_idx{0};

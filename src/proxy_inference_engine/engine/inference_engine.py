@@ -11,9 +11,7 @@ from proxy_inference_engine.engine.utils import get_top_logprobs
 from proxy_inference_engine.interaction import InteractionRole
 from proxy_inference_engine.interaction.content import Content
 from proxy_inference_engine.interaction.interaction import Interaction
-from proxy_inference_engine.logits_processors import repetition_penalty_logits_processor
 from proxy_inference_engine.models import load
-from proxy_inference_engine.samplers import make_sampler
 from proxy_inference_engine.state_machine import RootStateMachine
 from proxy_inference_engine.tokenizer import Tokenizer
 
@@ -22,6 +20,7 @@ logger = logging.getLogger(__name__)
 type Sampler = Callable[[mx.array], mx.array]
 type LogitsProcessor = Callable[[mx.array, mx.array], mx.array]
 type ModelOutput = tuple[int, dict[int, float]]
+
 
 class InferenceEngine:
     """
@@ -108,7 +107,9 @@ class InferenceEngine:
         encoded_prompt = self.prepare_engine(prompt, **inference_kwargs)
         return self.generate_interaction(encoded_prompt, **inference_kwargs)
 
-    def generate_interaction(self, encoded_prompt: mx.array, **inference_kwargs) -> Interaction:
+    def generate_interaction(
+        self, encoded_prompt: mx.array, **inference_kwargs
+    ) -> Interaction:
         """
         Generate a completion for the given prompt.
         """
@@ -193,11 +194,8 @@ class InferenceEngine:
 
         for new_tokens, new_logprobs in self.generate_step(prompt_ids):
             token_count += new_tokens.size
-            if collect_logprobs :
-                logprobs_map = get_top_logprobs(
-                    new_logprobs,
-                    top_logprobs
-                )
+            if collect_logprobs:
+                logprobs_map = get_top_logprobs(new_logprobs, top_logprobs)
 
             tokens = new_tokens.tolist()
             assert isinstance(tokens, list)
@@ -299,22 +297,8 @@ class InferenceEngine:
     def make_sampler(self, **kwargs) -> Callable[[mx.array], mx.array]:
         """
         Return a sampler function.
-        If structured is True, use the structured sampler.
-        Otherwise, use the simple sampler.
         """
-        temp = kwargs.get("temp", 1.0)
-        top_p = kwargs.get("top_p", 1.0)
-        top_k = kwargs.get("top_k", -1)
-        min_p = kwargs.get("min_p", 0.0)
-        min_tokens_to_keep = kwargs.get("min_tokens_to_keep", 1)
-        sampler = make_sampler(
-            temp=temp,
-            min_p=min_p,
-            min_tokens_to_keep=min_tokens_to_keep,
-            top_p=top_p,
-            top_k=top_k,
-        )
-        return lambda x: self.structuring_engine.sample(x, sampler)
+        return lambda x: mx.argmax(x)
 
     def make_processors(
         self, **kwargs
@@ -324,12 +308,5 @@ class InferenceEngine:
         """
         logits_processors = []
         logits_processors.append(self.structuring_engine.process_logits)
-
-        if kwargs.get("repetition_penalty", 1.0) != 1.0:
-            repetition_penalty = float(kwargs.get("repetition_penalty", 1.0))
-            context_size = int(kwargs.get("context_size", 60))
-            logits_processors.append(
-                repetition_penalty_logits_processor(repetition_penalty, context_size)
-            )
 
         return logits_processors

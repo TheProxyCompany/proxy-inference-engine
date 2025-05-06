@@ -59,9 +59,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # --- Python Configuration ---
-# Force use of virtualenv
 set(Python_VIRTUALENV FIRST)
-set(Python_ROOT_DIR "${CMAKE_SOURCE_DIR}/.venv")
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 message(STATUS "Using Python site-packages (Python_SITELIB): ${Python_SITELIB}")
 
@@ -71,6 +69,25 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/mlx EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog EXCLUDE_FROM_ALL)
 
 find_package(nlohmann_json 3.12.0 REQUIRED)
+find_package(Boost)
+if(Boost_FOUND)
+    message(STATUS "Boost found. Version: ${Boost_VERSION_STRING}")
+    include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
+else()
+    message(STATUS "Boost not found via find_package. Attempting FetchContent for Boost headers.")
+    include(FetchContent)
+    FetchContent_Declare(
+        boost_headers
+        GIT_REPOSITORY https://github.com/boostorg/boost.git
+        GIT_TAG boost-1.88.0
+    )
+    FetchContent_GetProperties(boost_headers)
+    if(NOT boost_headers_POPULATED)
+        FetchContent_Populate(boost_headers)
+    endif()
+    include_directories(SYSTEM ${boost_headers_SOURCE_DIR})
+    message(STATUS "Using Boost headers from FetchContent directory: ${boost_headers_SOURCE_DIR}")
+endif()
 
 # --- Find installed pse_core package location ---
 set(pse_core_DIR "${Python_SITELIB}/pse_core/sdk/cmake")
