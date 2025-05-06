@@ -12,10 +12,7 @@ namespace pie_core::ipc {
 
     class IPCConsumer {
     public:
-        IPCConsumer(
-            const std::string& response_shm_name = RESPONSE_QUEUE_SHM_NAME,
-            const std::string& bulk_response_shm_name = "/pie_bulk_response_data"
-        );
+        IPCConsumer(const std::string& response_shm_name = RESPONSE_QUEUE_SHM_NAME);
         ~IPCConsumer();
 
         std::optional<ResponseDeltaSlot> consume_next_delta(int timeout_ms = -1);
