@@ -176,6 +176,7 @@ cython_debug/
 .cursor
 .py-build-cmake_cache/
 
-.claude
+.claude/
 *.profraw
 .models
+.vscode/

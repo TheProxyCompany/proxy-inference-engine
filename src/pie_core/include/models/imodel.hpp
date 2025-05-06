@@ -1,9 +1,11 @@
 #pragma once
 
 #include <mlx/mlx.h>
+#include <engine/batch_details.hpp>
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <unordered_map>
 
 namespace mx = mlx::core;
 

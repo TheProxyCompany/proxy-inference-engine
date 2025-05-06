@@ -1,5 +1,6 @@
 #include "models/llama3/llama3.hpp"
 #include "engine/batch_details.hpp"
+#include "models/model_registry.hpp"
 #include <stdexcept>
 
 namespace pie_core::models::llama3 {
@@ -102,4 +103,18 @@ namespace pie_core::models::llama3 {
          }
     }
 
-} // namespace pie_core::models::llama
+    namespace {
+        std::unique_ptr<IModel> create_llama_model(const std::string& model_path) {
+            LlamaConfig config = parse_llama_config(model_path);
+            return std::make_unique<LlamaModel>(config);
+        }
+
+        struct LlamaRegistrar {
+            LlamaRegistrar() {
+                ModelRegistry::register_model("llama", create_llama_model);
+            }
+        };
+        static LlamaRegistrar registrar_instance;
+    }
+
+} // namespace pie_core::models::llama3
