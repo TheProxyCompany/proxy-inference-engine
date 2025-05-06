@@ -59,13 +59,18 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # --- Python Configuration ---
+# Force use of virtualenv
 set(Python_VIRTUALENV FIRST)
+set(Python_ROOT_DIR "${CMAKE_SOURCE_DIR}/.venv")
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 message(STATUS "Using Python site-packages (Python_SITELIB): ${Python_SITELIB}")
 
 # --- Find External Dependencies ---
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/mlx EXCLUDE_FROM_ALL)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog EXCLUDE_FROM_ALL)
+
+find_package(nlohmann_json 3.12.0 REQUIRED)
 
 # --- Find installed pse_core package location ---
 set(pse_core_DIR "${Python_SITELIB}/pse_core/sdk/cmake")
@@ -101,11 +106,13 @@ include_directories(
 # --- Source Files, Module Definition, Target Properties ---
 file(GLOB_RECURSE PIE_CORE_LIB_SRC CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/models/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/layers/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/samplers/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ipc/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/utils/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/layers/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/logit_processors/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/models/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/models/**/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/samplers/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/sequence/*.cpp"
 )
 
 # Define source for Python bindings
@@ -116,14 +123,19 @@ set(PIE_ENGINE_MAIN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
 add_library(${CORE_LIB_NAME} STATIC ${PIE_CORE_LIB_SRC})
 
-target_include_directories(${CORE_LIB_NAME} PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+target_include_directories(${CORE_LIB_NAME}
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_link_libraries(${CORE_LIB_NAME} PUBLIC
     ${PSE_CORE_LINK_TARGET}
     mlx
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog_header_only
 )
 
 target_compile_options(${CORE_LIB_NAME} PRIVATE

@@ -9,7 +9,7 @@
 
 namespace mx = mlx::core;
 
-namespace pie_core {
+namespace pie_core::engine {
 
     constexpr size_t TOKEN_CAPACITY_PER_PAGE = 64;
     static_assert((TOKEN_CAPACITY_PER_PAGE & (TOKEN_CAPACITY_PER_PAGE-1)) == 0,

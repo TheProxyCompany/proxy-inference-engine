@@ -1,21 +1,28 @@
 #pragma once
 
 #include <mlx/mlx.h>
+#include <engine/batch_details.hpp>
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <unordered_map>
 
 namespace mx = mlx::core;
 
-namespace pie_core {
+namespace pie_core::models {
 
     struct BatchDetails;
 
-    class Model {
+    class IModel {
     public:
-        virtual ~Model() = default;
+        virtual ~IModel() = default;
 
-        virtual mx::array forward(const BatchDetails& batch_details) = 0;
+        // --- Core Inference Method ---
+        virtual mx::array forward(const engine::BatchDetails& batch_details) const = 0;
+
+        // --- Parameter Management ---
+        virtual std::vector<mx::array*> get_parameters() = 0;
+        virtual void load_weights(const std::unordered_map<std::string, mx::array>& weights) = 0;
 
         // --- Structural Information for Scheduler/Allocator ---
         virtual int get_num_kv_heads() const noexcept = 0;
