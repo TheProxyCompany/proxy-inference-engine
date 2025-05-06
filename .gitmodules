@@ -9,4 +9,4 @@
 	url = https://github.com/gabime/spdlog.git
 [submodule "src/pie_core/external/tokenizers"]
 	path = src/pie_core/external/tokenizers
-	url = https://github.com/mlc-ai/tokenizers-cpp.git
+	url = https://github.com/TheProxyCompany/tokenizers-cpp.git

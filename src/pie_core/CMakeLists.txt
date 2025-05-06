@@ -116,10 +116,10 @@ target_compile_options(mlx PRIVATE -w)
 include_directories(
     SYSTEM
     ${pse_core_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/mlx/mlx
     ${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 # --- Source Files, Module Definition, Target Properties ---

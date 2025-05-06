@@ -2,31 +2,44 @@
 
 #include "engine/raw_request.hpp"
 #include "sequence/sequence.hpp"
-#include "ipc/ipc_reader.hpp"
+#include "ipc/shared_memory_manager.hpp"
+#include <boost/lockfree/spsc_queue.hpp>
+#include <tokenizers_cpp.h>
 
 #include <memory>
 #include <thread>
 #include <atomic>
 #include <string>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
+#include <vector>
 
 namespace pie_core::engine {
 
     class RequestPreprocessor {
     public:
-        // Define the types for the input and output SPSC queues
-        using RawRequestQueue = ipc::SPSCQueue<std::unique_ptr<RawRequestData>>;
-        using ProcessedSequenceQueue = ipc::SPSCQueue<std::unique_ptr<sequence::Sequence>>;
+        using RawRequestQueue = boost::lockfree::spsc_queue<
+            std::unique_ptr<RawRequestData>,
+            boost::lockfree::capacity<1024>
+        >;
+        using ProcessedSequenceQueue = boost::lockfree::spsc_queue<
+            std::unique_ptr<sequence::Sequence>,
+            boost::lockfree::capacity<1024>
+        >;
 
         /**
          * @brief Constructor.
          * @param input_raw_requests_queue Reference to the SPSC queue from IPCReader.
          * @param output_sequences_queue Reference to the SPSC queue for the Scheduler.
-         * @param tokenizer_path Path to the tokenizer model/config files.
+         * @param shm_manager Shared memory manager for prompt access.
+         * @param model_path Path to the tokenizer model/config files.
          */
         RequestPreprocessor(
             RawRequestQueue& input_raw_requests_queue,
             ProcessedSequenceQueue& output_sequences_queue,
-            const std::string& tokenizer_path // Or pass a pre-initialized Tokenizer unique_ptr
+            ipc::SharedMemoryManager& shm_manager,
+            const std::string& model_path
         );
 
         ~RequestPreprocessor();
@@ -48,11 +61,12 @@ namespace pie_core::engine {
         RequestPreprocessor& operator=(RequestPreprocessor&&) = delete;
 
     private:
-        void run_loop(); // The actual processing loop run by the thread
+        void run_loop();
 
         RawRequestQueue& input_queue_;
         ProcessedSequenceQueue& output_queue_;
-        std::unique_ptr<tokenizers::Tokenizer> tokenizer_; // Owns the tokenizer
+        ipc::SharedMemoryManager& shm_manager_;
+        std::unique_ptr<tokenizers::Tokenizer> tokenizer_;
 
         std::atomic<bool> stop_flag_{false};
         std::thread worker_thread_;

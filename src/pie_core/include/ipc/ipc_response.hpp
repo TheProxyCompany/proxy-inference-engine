@@ -5,10 +5,9 @@
 #include <cstddef>
 #include <vector>
 #include "sequence/sequence.hpp"
-constexpr size_t MAX_TOKENS_PER_DELTA = 16;
 
+constexpr size_t MAX_TOKENS_PER_DELTA = 4;
 constexpr size_t MAX_LOGPROBS_PER_TOKEN = 20;
-constexpr size_t MAX_LOGPROBS_PER_DELTA = MAX_TOKENS_PER_DELTA * MAX_LOGPROBS_PER_TOKEN;
 
 namespace pie_core::ipc {
 

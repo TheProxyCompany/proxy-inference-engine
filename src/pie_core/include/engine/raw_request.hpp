@@ -3,7 +3,7 @@
 #include "sequence/sampling_params.hpp"
 #include "sequence/logits_params.hpp"
 #include "sequence/stop_criteria.hpp"
-#include "sequence/ipc_handles.hpp" // For response path info
+#include "sequence/ipc_handles.hpp"
 
 #include <string>
 #include <vector>
@@ -18,19 +18,19 @@ namespace pie_core::engine {
 
     struct RawRequestData {
         uint64_t request_id;
-        std::string prompt_payload; // Raw prompt string or structured chat string (e.g., JSON)
-        PromptType type;            // To guide the preprocessor
+        std::string prompt_payload;
+        uint64_t _shm_prompt_offset;
+        uint64_t _shm_prompt_size;
+        PromptType type;
 
-        // Parameters directly from the RequestSlot or processed by IPCReader
         sequence::SamplingParams sampling_params;
         sequence::LogitsParams logits_params;
         sequence::StopCriteria stop_criteria;
-        sequence::IPCHandles ipc_handles; // For routing the response
+        sequence::IPCHandles ipc_handles;
 
-        std::string tool_schemas_json_str; // If tools are passed as strings
-        std::string response_format_json_str;
+        std::string tool_schemas_str;
+        std::string response_format_str;
 
-        // Timestamp from IPCReader for arrival at C++ engine
         uint64_t arrival_timestamp_ns;
     };
 

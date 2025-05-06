@@ -33,9 +33,7 @@ namespace pie_core::engine {
             page_id_(page_id),
             num_tokens_{0},
             ref_count_{0}
-        {
-
-        }
+        {}
 
         // --- Move Constructor ---
         KVPage(KVPage&& other) noexcept

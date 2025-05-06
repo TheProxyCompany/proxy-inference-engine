@@ -34,6 +34,9 @@ namespace pie_core::ipc {
         sequence::LogitsParams logits_params;
         sequence::StopCriteria stop_criteria;
         sequence::IPCHandles ipc_handles;
+
+        std::string tool_schemas_str;
+        std::string response_format_str;
     };
 
     constexpr size_t REQUEST_QUEUE_NUM_SLOTS = 1024;

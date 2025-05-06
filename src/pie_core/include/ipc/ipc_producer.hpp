@@ -27,7 +27,10 @@ namespace pie_core::ipc {
             const std::string& prompt_string,
             const sequence::SamplingParams& sampling_params,
             const sequence::LogitsParams& logits_params,
-            const sequence::StopCriteria& stop_criteria
+            const sequence::StopCriteria& stop_criteria,
+            const sequence::IPCHandles& ipc_handles,
+            const std::string& tool_schemas_str,
+            const std::string& response_format_str
         );
 
         IPCProducer(const IPCProducer&) = delete;

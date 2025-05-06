@@ -201,7 +201,10 @@ namespace pie_core::ipc {
         const std::string& prompt_string,
         const sequence::SamplingParams& sampling_params,
         const sequence::LogitsParams& logits_params,
-        const sequence::StopCriteria& stop_criteria
+        const sequence::StopCriteria& stop_criteria,
+        const sequence::IPCHandles& ipc_handles,
+        const std::string& tool_schemas_str,
+        const std::string& response_format_str
     ) {
         if (!request_queue_control_ || !request_slots_) {
             throw std::runtime_error("IPCProducer: SHM for requests not initialized.");
@@ -240,6 +243,9 @@ namespace pie_core::ipc {
         slot.sampling_params = sampling_params;
         slot.logits_params = logits_params;
         slot.stop_criteria = stop_criteria;
+        slot.ipc_handles = ipc_handles;
+        slot.tool_schemas_str = tool_schemas_str;
+        slot.response_format_str = response_format_str;
         std::atomic_thread_fence(std::memory_order_release);
 
         // 5. Mark READY
