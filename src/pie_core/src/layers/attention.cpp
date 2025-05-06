@@ -19,10 +19,10 @@ namespace pie_core::layers {
     // --- Forward Pass ---
     mx::array Attention::forward(
         const mx::array& hidden_state,
-        const pie_core::engine::BatchDetails& batch_details
+        const engine::BatchDetails& batch_details
     ) const {
-        int B = hidden_state.shape(0); // Batch size
-        int L = hidden_state.shape(1); // Sequence length of *this step*
+        int B = hidden_state.shape()[0]; // Batch size
+        int L = hidden_state.shape()[1]; // Sequence length of *this step*
         int head_dim = config_.hidden_dims / config_.num_heads;
 
         mx::array queries = q_proj_.forward(hidden_state);
@@ -72,15 +72,14 @@ namespace pie_core::layers {
         const mx::array& queries,
         const mx::array& keys,
         const mx::array& values,
-        const pie_core::engine::BatchDetails& batch_details
+        const engine::BatchDetails& batch_details
     ) const {
         // ==============================================================
         // !!! Placeholder Implementation !!!
         // This needs to be replaced with the actual Metal kernel call
         // using the MLX C++ API for custom kernels/primitives.
         // ==============================================================
-        std::cout << "\n[Attention::invoke_paged_attention_kernel] Placeholder kernel invoked.\n";
-        return mx::ones_like(queries);
+        return mx::zeros_like(queries);
     }
 
 } // namespace pie_core::layers

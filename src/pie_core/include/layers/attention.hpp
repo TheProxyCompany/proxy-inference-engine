@@ -11,9 +11,6 @@
 
 namespace mx = mlx::core;
 
-// Forward declare BatchDetails needed by forward pass
-namespace pie_core { struct BatchDetails; }
-
 namespace pie_core::layers {
 
     /**
@@ -53,12 +50,12 @@ namespace pie_core::layers {
          */
         mx::array forward(
             const mx::array& hidden_state,
-            const pie_core::engine::BatchDetails& batch_details
+            const engine::BatchDetails& batch_details
         ) const;
 
         mx::array operator()(
             const mx::array& hidden_state,
-            const pie_core::engine::BatchDetails& batch_details
+            const engine::BatchDetails& batch_details
         ) const {
             return forward(hidden_state, batch_details);
         }

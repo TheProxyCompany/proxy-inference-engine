@@ -16,7 +16,7 @@ namespace pie_core::models {
         virtual ~IModel() = default;
 
         // --- Core Inference Method ---
-        virtual mx::array forward(const engine::BatchDetails& batch_details) = 0;
+        virtual mx::array forward(const engine::BatchDetails& batch_details) const = 0;
 
         // --- Parameter Management ---
         virtual std::vector<mx::array*> get_parameters() = 0;

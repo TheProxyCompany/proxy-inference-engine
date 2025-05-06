@@ -11,7 +11,8 @@ namespace pie_core::layers {
             {num_embeddings, dims},
             0.0,
             std::sqrt(1.0 / dims)
-          ))
+          )),
+          transposed_weights_(mx::transpose(weights_))
     {}
 
     mx::array Embedding::forward(const mx::array& x) const {
@@ -21,7 +22,7 @@ namespace pie_core::layers {
 
     mx::array Embedding::as_linear(const mx::array& x) const {
         // Performs the linear projection: x @ weight_.T
-        return mx::matmul(x, mx::transpose(weights_));
+        return mx::matmul(x, transposed_weights_);
     }
 
     void Embedding::load_weights(const std::unordered_map<std::string, mx::array>& weights, const std::string& prefix) {
@@ -33,6 +34,7 @@ namespace pie_core::layers {
                       throw std::runtime_error("Mismatched shape for embedding weight: " + weight_key);
                  }
                  weights_ = loaded_weight;
+                 transposed_weights_ = mx::transpose(weights_);
             } else {
                  throw std::out_of_range("Weight key not found: " + weight_key);
             }

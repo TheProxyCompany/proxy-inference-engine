@@ -66,24 +66,11 @@ find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 message(STATUS "Using Python site-packages (Python_SITELIB): ${Python_SITELIB}")
 
 # --- Find External Dependencies ---
-include(FetchContent)
-FetchContent_Declare(spdlog GIT_REPOSITORY https://github.com/gabime/spdlog.git)
-set(SPDLOG_INSTALL OFF CACHE INTERNAL "")
-set(SPDLOG_BUILD_SHARED OFF CACHE INTERNAL "")
-set(SPDLOG_ENABLE_PCH OFF CACHE INTERNAL "")
-set(SPDLOG_BUILD_EXAMPLE OFF CACHE INTERNAL "")
-set(SPDLOG_BUILD_TESTS OFF CACHE INTERNAL "")
-set(SPDLOG_BUILD_BENCH OFF CACHE INTERNAL "")
-set(SPDLOG_FMT_EXTERNAL OFF CACHE INTERNAL "")
-FetchContent_MakeAvailable(spdlog)
-
-FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git)
-set(JSON_BuildTests OFF CACHE INTERNAL "")
-set(JSON_Install OFF CACHE INTERNAL "")
-FetchContent_MakeAvailable(json)
-
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/mlx EXCLUDE_FROM_ALL)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog EXCLUDE_FROM_ALL)
+
+find_package(nlohmann_json 3.12.0 REQUIRED)
 
 # --- Find installed pse_core package location ---
 set(pse_core_DIR "${Python_SITELIB}/pse_core/sdk/cmake")
@@ -147,8 +134,8 @@ target_include_directories(${CORE_LIB_NAME}
 target_link_libraries(${CORE_LIB_NAME} PUBLIC
     ${PSE_CORE_LINK_TARGET}
     mlx
-    nlohmann_json
-    spdlog
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog_header_only
 )
 
 target_compile_options(${CORE_LIB_NAME} PRIVATE

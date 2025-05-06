@@ -16,7 +16,7 @@ namespace pie_core::models::llama3 {
     public:
         explicit LlamaModel(const LlamaConfig& config);
 
-        mx::array forward(const engine::BatchDetails& batch_details) override;
+        mx::array forward(const engine::BatchDetails& batch_details) const override;
 
         int get_num_kv_heads() const noexcept override;
         int get_head_dim() const noexcept override;

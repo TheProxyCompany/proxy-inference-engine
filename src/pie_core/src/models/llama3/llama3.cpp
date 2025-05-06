@@ -33,7 +33,7 @@ namespace pie_core::models::llama3 {
         }
     }
 
-    mx::array LlamaModel::forward(const engine::BatchDetails& batch_details) {
+    mx::array LlamaModel::forward(const engine::BatchDetails& batch_details) const {
         // 1. Get embeddings from token IDs in batch_details
         mx::array hidden_state = embed_tokens_.forward(batch_details.token_ids);
 

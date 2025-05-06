@@ -59,6 +59,7 @@ namespace pie_core::layers {
 
     private:
         mx::array weights_;
+        mx::array transposed_weights_;
         int num_embeddings_;
         int dims_;
     };

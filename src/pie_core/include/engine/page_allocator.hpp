@@ -8,7 +8,7 @@
 #include <memory>
 #include <stdexcept>
 #include <cassert>
-#include "page.hpp"
+#include "engine/page.hpp"
 
 namespace mx = mlx::core;
 
