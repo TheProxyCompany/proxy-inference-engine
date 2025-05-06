@@ -18,9 +18,9 @@ namespace pie_core::samplers {
         virtual ~ISampler() = default;
 
         // Core sampling method.
-        virtual std::vector<int32_t> next_token(
+        virtual mx::array next_token(
             const mx::array& logits,
-            const SamplingParams& params,
+            const sequence::SamplingParams& params,
             std::mt19937& rng
         ) = 0;
     };
