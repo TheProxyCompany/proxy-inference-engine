@@ -53,7 +53,7 @@ namespace pie_core::ipc {
         void cleanup_ipc_resources();
         void trigger_kernel_event();
 
-        uint64_t IPCProducer::write_prompt_to_bulk_shm(const std::string& prompt_string);
+        uint64_t write_prompt_to_bulk_shm(const std::string& prompt_string);
         std::unique_ptr<SharedMemoryManager> bulk_shm_manager_;
     };
 
