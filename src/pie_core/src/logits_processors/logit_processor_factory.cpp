@@ -18,16 +18,6 @@ namespace pie_core::logit_processors {
             processors.push_back(create_processor("repetition"));
         }
 
-        // Add frequency penalty processor if frequency penalty is not 0
-        if (params.frequency_penalty != 0.0f) {
-            processors.push_back(create_processor("frequency_penalty"));
-        }
-
-        // Add presence penalty processor if presence penalty is not 0
-        if (params.presence_penalty != 0.0f) {
-            processors.push_back(create_processor("presence_penalty"));
-        }
-
         // Add logit bias processor if logit_bias map is not empty
         if (!params.logit_bias.empty()) {
             processors.push_back(create_processor("logit_bias"));

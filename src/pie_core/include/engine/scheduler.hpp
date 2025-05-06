@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <optional>
 
-namespace mlx::core { class Module; }
 namespace pie_core {
     class PageAllocator;
     class Sequence;
@@ -38,13 +37,6 @@ namespace pie_core::engine {
         ~Scheduler();
 
         /**
-         * @brief Enqueues a new sequence request for processing.
-         * @param sequence Unique pointer to the sequence object. Scheduler takes ownership if accepted.
-         * @return True if the request was accepted, false otherwise (e.g., queue full).
-         */
-        bool add_request(std::unique_ptr<Sequence> sequence);
-
-        /**
          * @brief Executes a single step of the scheduler's main loop.
          * @return True if any work was performed (batch executed), false if idle.
          */
@@ -58,7 +50,6 @@ namespace pie_core::engine {
 
     private:
         // --- PImpl (Pointer to Implementation) ---
-        // Forward declare the implementation struct/class.
         struct SchedulerImpl;
 
         // The unique pointer holding the actual implementation details.

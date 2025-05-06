@@ -9,8 +9,6 @@ namespace pie_core::engine {
 
     struct BatchDetails {
 
-        // --- Input Tokens & Positions ---
-
         /**
          * @brief Concatenated token IDs for all sequences in the batch for this step.
          * For prefill sequences, this includes the chunk of prompt tokens.

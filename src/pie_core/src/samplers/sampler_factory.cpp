@@ -8,7 +8,10 @@
 namespace pie_core::samplers {
 
     std::unique_ptr<ISampler> create_sampler(const sequence::SamplingParams& params) {
-
+        if (params.temperature == 0.0f) {
+            return SamplerRegistry::create_sampler("greedy");
+        }
+        return SamplerRegistry::create_sampler("categorical");
     }
 
 }
