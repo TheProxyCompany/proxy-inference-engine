@@ -170,6 +170,30 @@ namespace pie_core::ipc {
         return true;
     }
 
+    void IPCManager::trigger_kernel_event() {
+        if (kernel_event_fd_ == -1) {
+             spdlog::warn("IPCManager: Cannot trigger kernel event, FD is invalid.");
+             return;
+        }
+        #if defined(__APPLE__)
+            struct kevent change;
+            // Trigger the specific user event the reader waits on
+            EV_SET(&change, kqueue_ident_, EVFILT_USER, 0, NOTE_TRIGGER, 0, nullptr);
+            if (kevent(kernel_event_fd_, &change, 1, nullptr, 0, nullptr) == -1) {
+                spdlog::error("IPCManager: kevent trigger failed: {}", strerror(errno));
+            } else {
+                spdlog::trace("IPCManager: Manually triggered kqueue user event.");
+            }
+        #elif defined(__linux__)
+            uint64_t u = 1; // Value to write to eventfd
+            if (write(kernel_event_fd_, &u, sizeof(uint64_t)) != sizeof(uint64_t)) {
+                spdlog::error("IPCManager: eventfd write trigger failed: {}", strerror(errno));
+            } else {
+                 spdlog::trace("IPCManager: Manually triggered eventfd write.");
+            }
+        #endif
+    }
+
     void IPCManager::cleanup_shm_segment(const std::string& name) {
         // Ensure name starts with a forward slash on macOS
         std::string shm_name = name;

@@ -33,6 +33,11 @@ namespace pie_core::ipc {
          */
         [[nodiscard]] int get_kernel_event_fd() const noexcept;
 
+        /**
+         * @brief Manually triggers the kernel event to wake up waiters.
+         */
+        void trigger_kernel_event();
+
         // Prevent copying/moving
         IPCManager(const IPCManager&) = delete;
         IPCManager& operator=(const IPCManager&) = delete;

@@ -29,16 +29,23 @@ namespace pie_core::ipc {
 
     void RequestReader::run_loop() {
         spdlog::info("RequestReader: Run loop entered.");
-        stop_flag_.store(false, std::memory_order_release);
-
         while (!stop_flag_.load(std::memory_order_acquire)) {
-            if (!wait_for_notification()) {          // timeout or error
-                if (stop_flag_.load(std::memory_order_relaxed)) break;
+            if (!wait_for_notification()) {
+                if (stop_flag_.load(std::memory_order_relaxed)) {
+                    spdlog::debug("RequestReader: Stop flag detected after wait returned false.");
+                    break;
+                }
+                spdlog::warn("RequestReader: wait_for_notification returned false unexpectedly.");
                 continue;
             }
+
+            if (stop_flag_.load(std::memory_order_acquire)) {
+                spdlog::debug("RequestReader: Stop flag detected after successful wait.");
+                break;
+            }
+
             process_incoming_requests();
         }
-
         spdlog::info("RequestReader: Run loop exited.");
     }
 

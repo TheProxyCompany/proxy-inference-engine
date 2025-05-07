@@ -144,6 +144,9 @@ namespace pie_core::engine {
         if (preprocessor_) preprocessor_->stop();
         if (scheduler_) scheduler_->stop();
 
+        // Wake up the reader thread if it's blocked in kevent/eventfd_read
+        if (ipc_manager_) ipc_manager_->trigger_kernel_event();
+
         spdlog::info("Engine: Joining component threads...");
         // Join threads
         if (scheduler_t_.joinable()) {
