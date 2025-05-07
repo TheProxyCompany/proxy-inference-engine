@@ -61,20 +61,36 @@ namespace pie_core::ipc {
     }
 
     bool IPCManager::create_shm_segment(const std::string& name, size_t size) {
-        // 1. Create/Open SHM
-        int shm_fd = shm_open(name.c_str(), O_CREAT | O_RDWR, 0666);
-        if (shm_fd == -1) {
-            spdlog::error("IPCManager: shm_open failed for '{}': {}", name, strerror(errno));
-            return false;
+        // Ensure name starts with a forward slash on macOS
+        std::string shm_name = name;
+        #if defined(__APPLE__)
+        if (!shm_name.empty() && shm_name[0] != '/') {
+            shm_name = "/" + shm_name;
+            spdlog::info("IPCManager: Added leading slash to SHM name: {}", shm_name);
         }
+        #endif
 
-        // 2. Set Size
-        if (ftruncate(shm_fd, size) == -1) {
-            spdlog::error("IPCManager: ftruncate failed for '{}' (size {}): {}", name, size, strerror(errno));
-            close(shm_fd);
-            shm_unlink(name.c_str()); // Clean up on failure
+        // 1. First attempt to remove any existing SHM with this name
+        shm_unlink(shm_name.c_str());
+
+        // 2. Create/Open SHM
+        int shm_fd = shm_open(shm_name.c_str(), O_CREAT | O_RDWR, 0666);
+        if (shm_fd == -1) {
+            spdlog::error("IPCManager: shm_open failed for '{}': {} (errno={})",
+                         shm_name, strerror(errno), errno);
             return false;
         }
+        spdlog::debug("IPCManager: shm_open succeeded for '{}', fd={}", shm_name, shm_fd);
+
+        // 3. Set Size
+        if (ftruncate(shm_fd, size) == -1) {
+            spdlog::error("IPCManager: ftruncate failed for '{}' (size {}): {} (errno={})",
+                         shm_name, size, strerror(errno), errno);
+            close(shm_fd);
+            shm_unlink(shm_name.c_str()); // Clean up on failure
+            return false;
+        }
+        spdlog::debug("IPCManager: ftruncate succeeded for '{}', size={}", shm_name, size);
 
         // 3. Map temporarily to initialize control block (atomics)
         void* map_ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
@@ -155,14 +171,23 @@ namespace pie_core::ipc {
     }
 
     void IPCManager::cleanup_shm_segment(const std::string& name) {
-        if (shm_unlink(name.c_str()) == -1) {
+        // Ensure name starts with a forward slash on macOS
+        std::string shm_name = name;
+        #if defined(__APPLE__)
+        if (!shm_name.empty() && shm_name[0] != '/') {
+            shm_name = "/" + shm_name;
+        }
+        #endif
+
+        if (shm_unlink(shm_name.c_str()) == -1) {
             // This might fail if the segment was already removed or never created properly
             // Log as warning unless it's an unexpected error like EACCES
             if (errno != ENOENT) {
-                spdlog::warn("IPCManager: shm_unlink failed for '{}': {} (Segment might already be removed)", name, strerror(errno));
+                spdlog::warn("IPCManager: shm_unlink failed for '{}': {} (errno={}) (Segment might already be removed)",
+                            shm_name, strerror(errno), errno);
             }
         } else {
-            spdlog::info("IPCManager: SHM segment '{}' unlinked.", name);
+            spdlog::info("IPCManager: SHM segment '{}' unlinked.", shm_name);
         }
     }
 

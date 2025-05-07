@@ -25,4 +25,20 @@ namespace pie_core::sequence {
     {
 
     }
+
+    void Sequence::append_page(uint32_t page_id) {
+        page_table.push_back(page_id);
+    }
+
+    void Sequence::append_token(int32_t token_id) {
+        tokens.push_back(token_id);
+    }
+
+    size_t Sequence::get_logical_len() const {
+        return tokens.size();
+    }
+
+    size_t Sequence::get_generation_len() const {
+        return tokens.size() > prompt_len ? tokens.size() - prompt_len : 0;
+    }
 }

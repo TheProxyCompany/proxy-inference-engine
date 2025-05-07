@@ -37,7 +37,7 @@ namespace pie_core::ipc {
         );
         ~RequestReader();
 
-        void start();
+        void run_loop();
         void stop();
 
         RequestReader(const RequestReader&) = delete;
@@ -59,7 +59,7 @@ namespace pie_core::ipc {
         constexpr static size_t BULK_DATA_SHM_SIZE = 1024 * 1024 * 256; // 256MB example
 
         int kernel_event_fd_;
-        std::atomic<bool> running_{false};
+        std::atomic<bool> stop_flag_{false};
 
         RawRequestQueue& output_queue_;
         SharedMemoryManager& shm_manager_;

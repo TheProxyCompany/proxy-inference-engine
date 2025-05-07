@@ -27,18 +27,24 @@ namespace pie_core::ipc {
         cleanup_ipc_resources();
     }
 
-    void RequestReader::start() {
-        running_.store(true, std::memory_order_release);
-        while (running_.load(std::memory_order_acquire)) {
+    void RequestReader::run_loop() {
+        spdlog::info("RequestReader: Run loop entered.");
+        stop_flag_.store(false, std::memory_order_release);
+
+        while (!stop_flag_.load(std::memory_order_acquire)) {
             if (!wait_for_notification()) {          // timeout or error
+                if (stop_flag_.load(std::memory_order_relaxed)) break;
                 continue;
             }
             process_incoming_requests();
         }
+
+        spdlog::info("RequestReader: Run loop exited.");
     }
 
     void RequestReader::stop() {
-        running_.store(false, std::memory_order_release);
+        stop_flag_.store(true, std::memory_order_release);
+        spdlog::debug("RequestReader: Stop signal received.");
     }
 
     bool RequestReader::initialize_ipc_resources(const std::string& name) {

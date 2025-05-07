@@ -6,6 +6,11 @@
 #include <vector>
 #include "sequence/sequence.hpp"
 
+// For __APPLE__ macro
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
+
 constexpr size_t MAX_TOKENS_PER_DELTA = 4;
 constexpr size_t MAX_LOGPROBS_PER_TOKEN = 20;
 
@@ -31,7 +36,11 @@ namespace pie_core::ipc {
     // --- Response Queue ---
     constexpr size_t RESPONSE_QUEUE_NUM_SLOTS = 1024;
     constexpr size_t RESPONSE_QUEUE_SHM_SIZE = RESPONSE_QUEUE_NUM_SLOTS * sizeof(ResponseDeltaSlot);
+#if defined(__APPLE__)
     constexpr const char* RESPONSE_QUEUE_SHM_NAME = "/pie_response_slots";
+#else
+    constexpr const char* RESPONSE_QUEUE_SHM_NAME = "pie_response_slots";
+#endif
 
     // Control block for the response queue
     struct alignas(64) ResponseQueueControl {

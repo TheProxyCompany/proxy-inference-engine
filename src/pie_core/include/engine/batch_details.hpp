@@ -9,6 +9,18 @@ namespace pie_core::engine {
 
     struct BatchDetails {
 
+        BatchDetails()
+            : token_ids(mx::array({})),
+              positions(mx::array({})),
+              sequence_ids(std::vector<uint64_t>()),
+              input_lengths(std::vector<int32_t>()),
+              context_lengths(std::vector<int32_t>()),
+              consolidated_block_table(mx::array({})),
+              num_prefill_sequences(0),
+              num_decode_sequences(0),
+              total_tokens_in_step(0)
+        {}
+
         /**
          * @brief Concatenated token IDs for all sequences in the batch for this step.
          * For prefill sequences, this includes the chunk of prompt tokens.
@@ -63,7 +75,6 @@ namespace pie_core::engine {
          * to a physical page ID managed by the PageAllocator.
          */
         mx::array consolidated_block_table;
-
 
         // --- Batch Metadata ---
 

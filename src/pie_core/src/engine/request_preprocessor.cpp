@@ -45,30 +45,13 @@ namespace pie_core::engine {
     }
 
     RequestPreprocessor::~RequestPreprocessor() {
-        if (worker_thread_.joinable()) {
-            stop_and_join();
-        }
+        stop();
         spdlog::info("RequestPreprocessor destructed.");
     }
 
-    void RequestPreprocessor::start() {
-        if (worker_thread_.joinable()) {
-            spdlog::warn("RequestPreprocessor: Start called on an already running preprocessor.");
-            return;
-        }
-        stop_flag_.store(false, std::memory_order_relaxed);
-        worker_thread_ = std::thread(&RequestPreprocessor::run_loop, this);
-        spdlog::info("RequestPreprocessor: Worker thread started.");
-    }
-
-    void RequestPreprocessor::stop_and_join() {
+    void RequestPreprocessor::stop() {
         stop_flag_.store(true, std::memory_order_release);
-        if (worker_thread_.joinable()) {
-            worker_thread_.join();
-            spdlog::info("RequestPreprocessor: Worker thread joined.");
-        } else {
-            spdlog::info("RequestPreprocessor: Stop called, but worker thread was not joinable (already joined or not started).");
-        }
+        spdlog::debug("RequestPreprocessor: Stop signal received.");
     }
 
     void RequestPreprocessor::run_loop() {
@@ -152,7 +135,8 @@ namespace pie_core::engine {
                 if (stop_flag_.load(std::memory_order_acquire)) {
                     break;
                 }
-                std::this_thread::yield();
+                // Sleep briefly to prevent busy-waiting when queue is empty
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
             }
         }
         spdlog::info("RequestPreprocessor: Run loop exited.");

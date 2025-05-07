@@ -8,6 +8,7 @@
 #include "ipc/request_writer.hpp"
 #include "ipc/shared_memory_manager.hpp"
 #include "ipc/ipc_manager.hpp"
+#include <atomic>
 
 namespace pie_core::engine {
 
@@ -16,7 +17,14 @@ namespace pie_core::engine {
         Engine(const std::string& model_path);
         ~Engine();
 
-        void start();
+        /**
+         * @brief Runs the engine in a blocking manner until shutdown is signaled
+         */
+        void run_blocking();
+
+        /**
+         * @brief Signals all components to stop and joins component threads
+         */
         void stop();
 
     private:
@@ -24,6 +32,8 @@ namespace pie_core::engine {
         std::thread preprocessor_t_;
         std::thread scheduler_t_;
         std::thread writer_t_;
+
+        std::atomic<bool> stop_flag_{false};
 
         std::unique_ptr<models::IModel> model_;
         std::unique_ptr<ipc::SharedMemoryManager> bulk_shm_manager_;

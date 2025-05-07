@@ -45,14 +45,14 @@ namespace pie_core::engine {
         ~RequestPreprocessor();
 
         /**
-         * @brief Starts the preprocessor thread.
+         * @brief Runs the main preprocessor loop. Will be called by Engine in its own thread.
          */
-        void start();
+        void run_loop();
 
         /**
-         * @brief Signals the preprocessor thread to stop and joins it.
+         * @brief Signals the preprocessor to stop.
          */
-        void stop_and_join();
+        void stop();
 
         // Prevent copying and moving
         RequestPreprocessor(const RequestPreprocessor&) = delete;
@@ -61,15 +61,12 @@ namespace pie_core::engine {
         RequestPreprocessor& operator=(RequestPreprocessor&&) = delete;
 
     private:
-        void run_loop();
-
         RawRequestQueue& input_queue_;
         ProcessedSequenceQueue& output_queue_;
         ipc::SharedMemoryManager& shm_manager_;
         std::unique_ptr<tokenizers::Tokenizer> tokenizer_;
 
         std::atomic<bool> stop_flag_{false};
-        std::thread worker_thread_;
     };
 
 } // namespace pie_core::engine
