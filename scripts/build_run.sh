@@ -78,12 +78,12 @@ activate_venv() {
 
 resolve_model_path() {
   local input="$1" output exit_status
-  log "Resolving model path for input: '$input'"
+  log "Model path: '$input'"
 
   # Inline Python to resolve model path
   output=$(python - <<'PY' "$input"
 import sys
-from proxy_inference_engine.models.utils import get_model_path
+from proxy_inference_engine import get_model_path
 
 if len(sys.argv) != 2:
     sys.stderr.write("Expected exactly one argument (model path)\n")
@@ -99,7 +99,6 @@ PY
   [[ -d "$output" ]]       || err "Resolved model path '$output' is not a directory"
 
   RESOLVED_MODEL_PATH="$output"
-  log "Model resolved to: '$RESOLVED_MODEL_PATH'"
 }
 
 launch_engine() {

@@ -13,6 +13,6 @@ def test_import():
         import proxy_inference_engine
 
         assert proxy_inference_engine.__file__ is not None
-        proxy_inference_engine.pie_core.hello()
+        assert proxy_inference_engine.pie_core.health_check()
     except ImportError:
         pytest.fail("Failed to import proxy_inference_engine")

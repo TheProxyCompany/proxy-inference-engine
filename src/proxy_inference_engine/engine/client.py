@@ -4,13 +4,12 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from proxy_inference_engine.engine.inference_engine import InferenceEngine
 from proxy_inference_engine.interaction import Interaction, InteractionRole
 
 
 class InferenceEngineClient:
     """
-    A client for the proxy inference engine.
+    A python sdk client for local inference with the proxy inference engine.
     """
 
     def __init__(
@@ -21,16 +20,17 @@ class InferenceEngineClient:
         Initialize the inference engine client.
         """
         self.model_path = model_path
-        self.inference_engine = InferenceEngine(model_path)
+        # self.inference_engine = InferenceEngine(model_path)
 
     def generate(self, request: GenerationRequest) -> Interaction:
         """
         Generate a chat completion.
         """
-        engine_request = request.to_interactions()
-        engine_kwargs = request.generation_kwargs or {}
-
-        return self.inference_engine(engine_request, **engine_kwargs)
+        # engine_request = request.to_interactions()
+        # engine_kwargs = request.generation_kwargs or {}
+        # print(engine_request, engine_kwargs)
+        # return self.inference_engine(engine_request, **engine_kwargs)
+        return None  # type: ignore[return-value]
 
 
 class GenerationRequest(BaseModel):

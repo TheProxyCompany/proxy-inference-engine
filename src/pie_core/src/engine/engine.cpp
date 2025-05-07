@@ -42,7 +42,6 @@ namespace pie_core::engine {
         spdlog::info("Bulk data shared memory manager initialized");
 
         // --- 3. Load Model ---
-        spdlog::info("Loading model from: {}", model_path);
         model_ = models::load_model(model_path);
         spdlog::info("Model loaded with {} layers, {} kv heads, {} head dim, {} vocab size",
             model_->get_num_layers(),

@@ -76,18 +76,19 @@ namespace pie_core::engine {
                 }
 
                 // --- 1. Tokenization ---
-                try {
-                    token_ids = tokenizer_->Encode(prompt_payload);
-                    if (token_ids.empty()) {
-                        spdlog::error("RequestPreprocessor: Tokenization failed for request ID {}.", raw_request_ptr->request_id);
-                        continue;
-                    }
-                    spdlog::debug("RequestPreprocessor: Tokenized request ID {}, num_tokens: {}", raw_request_ptr->request_id, token_ids.size());
+                token_ids = {0};
+                // try {
+                //     token_ids = tokenizer_->Encode(prompt_payload);
+                //     if (token_ids.empty()) {
+                //         spdlog::error("RequestPreprocessor: Tokenization failed for request ID {}.", raw_request_ptr->request_id);
+                //         continue;
+                //     }
+                //     spdlog::debug("RequestPreprocessor: Tokenized request ID {}, num_tokens: {}", raw_request_ptr->request_id, token_ids.size());
 
-                } catch (const std::exception& e) {
-                    spdlog::error("RequestPreprocessor: Exception during tokenization for request ID {}: {}", raw_request_ptr->request_id, e.what());
-                    continue;
-                }
+                // } catch (const std::exception& e) {
+                //     spdlog::error("RequestPreprocessor: Exception during tokenization for request ID {}: {}", raw_request_ptr->request_id, e.what());
+                //     continue;
+                // }
 
                 // --- 2. Deallocate Raw Prompt String from SHM ---
                 if (raw_request_ptr->_shm_prompt_size > 0) {

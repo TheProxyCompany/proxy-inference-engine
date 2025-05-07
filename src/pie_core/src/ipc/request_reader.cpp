@@ -1,9 +1,11 @@
 #include "ipc/request_reader.hpp"
 #include "engine/raw_request.hpp"
 
-#include <sys/event.h>      // kqueue
+#include <sys/event.h> // Ensure this is included for timespec
 #include <unistd.h>
 #include <spdlog/spdlog.h>
+#include <time.h>      // For timespec
+#include <chrono>
 
 namespace pie_core::ipc {
 
@@ -30,21 +32,25 @@ namespace pie_core::ipc {
     void RequestReader::run_loop() {
         spdlog::info("RequestReader: Run loop entered.");
         while (!stop_flag_.load(std::memory_order_acquire)) {
-            if (!wait_for_notification()) {
-                if (stop_flag_.load(std::memory_order_relaxed)) {
-                    spdlog::debug("RequestReader: Stop flag detected after wait returned false.");
-                    break;
-                }
-                spdlog::warn("RequestReader: wait_for_notification returned false unexpectedly.");
-                continue;
-            }
+            // Wait for notification OR timeout
+            bool event_received = wait_for_notification();
 
+            // Check stop flag *after* waiting/polling
             if (stop_flag_.load(std::memory_order_acquire)) {
-                spdlog::debug("RequestReader: Stop flag detected after successful wait.");
+                spdlog::debug("RequestReader: Stop flag detected after wait.");
                 break;
             }
 
+            // Always try processing, even on timeout, as polling might find data
+            // written between polls without an event trigger succeeding.
             process_incoming_requests();
+
+            // If no event was received (timeout), add a minimal sleep
+            // to prevent extremely tight spin if queue remains empty.
+            // This is less critical now since kevent has a timeout, but doesn't hurt.
+            if (!event_received) {
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
+            }
         }
         spdlog::info("RequestReader: Run loop exited.");
     }
@@ -99,21 +105,44 @@ namespace pie_core::ipc {
     }
 
     bool RequestReader::wait_for_notification() {
-        /* Plain kqueue one-shot wait */
-        struct kevent Kev;
-        EV_SET(&Kev, /*ident*/kernel_event_fd_, EVFILT_READ,
-               EV_ADD | EV_ENABLE | EV_CLEAR, 0, 0, nullptr);
-
-        int kq = kqueue();
-        if (kq == -1) {
-            perror("kqueue");
-            return false;
+        if (kernel_event_fd_ < 0) {
+            spdlog::error("RequestReader: Invalid kernel event fd ({}) in wait_for_notification.", kernel_event_fd_);
+            // Fallback to short sleep to prevent tight spin loop if fd is bad
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            return false; // Indicate potential error or just timeout
         }
 
-        struct kevent out;
-        int nevents = kevent(kq, &Kev, 1, &out, 1, nullptr);
-        close(kq);
-        return nevents > 0;
+        struct kevent kev_in;
+        // Wait for the user event IDENT we registered in IPCManager
+        EV_SET(&kev_in, kqueue_ident_, EVFILT_USER, EV_ADD | EV_ENABLE | EV_CLEAR, 0, 0, nullptr);
+
+        // Set a short timeout (e.g., 10 milliseconds)
+        struct timespec timeout;
+        timeout.tv_sec = 0;
+        timeout.tv_nsec = 10 * 1000000; // 10 milliseconds
+
+        struct kevent kev_out;
+        // Pass the timeout to kevent
+        int nevents = kevent(kernel_event_fd_, &kev_in, 1, &kev_out, 1, &timeout);
+
+        if (nevents == -1) {
+            spdlog::error("RequestReader: kevent wait failed: {}", strerror(errno));
+            return false; // Error occurred
+        } else if (nevents == 0) {
+            // Timeout occurred - this is EXPECTED when polling and no event arrived
+            spdlog::trace("RequestReader: kevent timed out (polling).");
+            return false; // Indicate timeout, loop will continue and check queue state
+        } else {
+            // Event received
+            if (kev_out.filter == EVFILT_USER && kev_out.ident == kqueue_ident_) {
+                spdlog::trace("RequestReader: Received kernel event notification.");
+                return true; // Event successfully received
+            } else {
+                spdlog::warn("RequestReader: Received unexpected kernel event (ident={}, filter={}).",
+                             kev_out.ident, kev_out.filter);
+                return false; // Unexpected event, treat as timeout/error for now
+            }
+        }
     }
 
     void RequestReader::process_incoming_requests() {

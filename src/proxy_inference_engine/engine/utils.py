@@ -1,48 +1,43 @@
-import mlx.core as mx
+import logging
+from pathlib import Path
+
+from huggingface_hub import snapshot_download
+
+logger = logging.getLogger(__name__)
 
 
-def get_top_logprobs(logprobs: mx.array, top_k: int) -> dict[int, float]:
-    """Extract top-k logprobs using MLX arrays.
-
-    Optimized implementation for MLX arrays that handles both 1D and 2D inputs.
+def get_model_path(path_or_hf_repo: str, revision: str | None = None) -> Path:
+    """
+    Ensures the model is available locally. If the path does not exist locally,
+    it is downloaded from the Hugging Face Hub.
 
     Args:
-        logits: MLX array of shape (vocab_size,) or (1, vocab_size)
-        top_k: Number of top tokens to return
+        path_or_hf_repo (str): The local path or Hugging Face repository ID of the model.
+        revision (str, optional): A revision id which can be a branch name, a tag, or a commit hash.
 
     Returns:
-        Tuple of (indices, values) arrays containing the top-k results
-
-    Raises:
-        ImportError: If MLX is not installed
-        TypeError: If input is not an MLX array
-        ValueError: If input dimensions are invalid
+        Path: The path to the model.
     """
-    if top_k == 0:
-        return {}
+    model_path = Path(path_or_hf_repo)
 
-    ndim = logprobs.ndim
-    if ndim == 2:
-        logprobs = mx.squeeze(logprobs, axis=0, stream=mx.cpu)
-    elif ndim != 1:
-        raise ValueError(f"Expected 1D or 2D array, got {ndim}D")
-
-    vocab_size = logprobs.shape[0]
-    top_k = min(top_k, vocab_size)
-
-    if vocab_size == 0:
-        return {}
-
-    # Use argpartition for efficient selection
-    top_k_indices = mx.argpartition(-logprobs, top_k - 1, stream=mx.cpu)[:top_k]
-    top_k_values = logprobs[top_k_indices]
-
-    # Sort for consistency
-    sorted_order = mx.argsort(-top_k_values, stream=mx.cpu)
-    result: dict[int, float] = {}
-    for i in range(top_k):
-        token_id = int(top_k_indices[sorted_order[i]])
-        logprob = float(top_k_values[sorted_order[i]])
-        result[token_id] = logprob
-
-    return result
+    if not model_path.exists():
+        try:
+            model_path = Path(
+                snapshot_download(
+                    path_or_hf_repo,
+                    revision=revision,
+                    allow_patterns=[
+                        "*.json",
+                        "*.safetensors",
+                        "*.py",
+                        "tokenizer.model",
+                        "*.tiktoken",
+                        "*.txt",
+                    ],
+                )
+            )
+        except Exception as e:
+            raise ValueError(
+                f"Model not found for path or HF repo: {path_or_hf_repo}."
+            ) from e
+    return model_path

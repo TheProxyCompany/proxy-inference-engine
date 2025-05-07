@@ -59,6 +59,7 @@ namespace pie_core::ipc {
         constexpr static size_t BULK_DATA_SHM_SIZE = 1024 * 1024 * 256; // 256MB example
 
         int kernel_event_fd_;
+        uintptr_t kqueue_ident_{1}; // For kqueue user event identification
         std::atomic<bool> stop_flag_{false};
 
         RawRequestQueue& output_queue_;

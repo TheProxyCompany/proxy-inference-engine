@@ -251,8 +251,8 @@ namespace pie_core::ipc {
         // 5. Mark READY
         slot.state.store(RequestState::READY, std::memory_order_release);
 
-        // 6. Trigger kernel event
-        trigger_kernel_event();
+        // // 6. Trigger kernel event
+        // trigger_kernel_event();
 
         return request_id;
     }

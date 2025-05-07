@@ -11,10 +11,10 @@
 #include <TargetConditionals.h>
 #endif
 
-constexpr size_t MAX_TOKENS_PER_DELTA = 4;
-constexpr size_t MAX_LOGPROBS_PER_TOKEN = 20;
-
 namespace pie_core::ipc {
+
+    constexpr size_t MAX_TOKENS_PER_DELTA = 4;
+    constexpr size_t MAX_LOGPROBS_PER_TOKEN = 20;
 
     enum class ResponseSlotState : uint32_t {
         FREE_FOR_CPP_WRITER = 0, // Slot is available for C++ IPCWriter

@@ -43,45 +43,42 @@ namespace pie_core::engine {
             // 1. Ingest new sequences
             ingest_new_sequences();
 
-            // 2. Select sequences for the next batch
-            auto [prefill_ids, decode_ids] = select_batch();
+            std::unique_ptr<sequence::Sequence> seq_to_process = nullptr;
 
-            if (prefill_ids.empty() && decode_ids.empty()) {
-                // No work to do, check if stopping before waiting
+            if (!running_sequences_.empty()) {
+                auto it = running_sequences_.begin();
+                seq_to_process = std::move(it->second);
+                running_sequences_.erase(it);
+            }
+
+            if (seq_to_process) {
+                spdlog::info("Scheduler: Mock processing sequence ID {}", seq_to_process->sequence_id);
+
+                // Simulate work
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+                // Create mock response
+                ipc::ResponseDeltaSlot delta;
+                delta.request_id = seq_to_process->sequence_id;
+                delta.num_tokens_in_delta = 1;
+                delta.tokens[0] = 64000; // Example token ID
+                // Add dummy logprobs if needed for testing Python side
+                delta.logprobs[0][0] = -0.1f;
+                delta.is_final_delta = true; // Send just one final delta
+                delta.finish_reason = sequence::FinishReason::STOP;
+
+                // Send mock response
+                try {
+                    response_writer_.write_delta(delta);
+                    spdlog::info("Scheduler: Sent mock response for seq ID {}", seq_to_process->sequence_id);
+                } catch (const ipc::ResponseWriterError& e) {
+                    spdlog::error("Scheduler: Failed to write mock response delta for seq {}: {}", seq_to_process->sequence_id, e.what());
+                }
+            } else {
+                // No sequences waiting/running, sleep briefly
                 if (stop_flag_.load(std::memory_order_relaxed)) break;
-                std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Adjust sleep duration as needed
-                continue;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
-
-            spdlog::debug("Scheduler: Selected batch with {} prefill, {} decode sequences.", prefill_ids.size(), decode_ids.size());
-
-            // 3. Build BatchDetails
-            BatchDetails batch_details = build_batch_details(prefill_ids, decode_ids);
-            if (batch_details.total_tokens_in_step == 0) {
-                 spdlog::warn("Scheduler: Built an empty batch, skipping.");
-                 continue; // Should ideally not happen if select_batch returned non-empty IDs
-            }
-
-            // 4. Execute Model Forward Pass
-            mx::array logits = mx::array({});
-            try {
-                 logits = model_.forward(batch_details);
-                 // mx::eval(logits); // Optional: Force evaluation here if needed for timing/debugging
-                 spdlog::trace("Scheduler: Model forward pass completed for batch.");
-            } catch (const std::exception& e) {
-                 spdlog::error("Scheduler: Exception during model forward pass: {}", e.what());
-                 // Handle error: mark sequences in batch as errored, free resources, etc.
-                 continue;
-            }
-
-            // 5. Process Output Logits & Sample Next Tokens
-            process_batch_output(logits, batch_details);
-
-            // 6. Cleanup completed/aborted sequences
-            cleanup_finished_sequences();
-
-            // Optional: Yield or sleep briefly if loop is too tight
-             std::this_thread::yield();
         }
         spdlog::info("Scheduler: Run loop exited.");
     }
@@ -90,62 +87,14 @@ namespace pie_core::engine {
         std::unique_ptr<sequence::Sequence> seq_ptr;
         while (running_sequences_.size() < max_num_seqs_ && incoming_sequence_queue_.pop(seq_ptr)) {
             spdlog::debug("Scheduler: Ingested new sequence ID {}.", seq_ptr->sequence_id);
-            if (allocate_pages_for_sequence(*seq_ptr)) {
-                 seq_ptr->status = sequence::SequenceStatus::PREFILLING; // Assume prefill first
-                 running_sequences_.emplace(seq_ptr->sequence_id, std::move(seq_ptr));
-            } else {
-                spdlog::warn("Scheduler: Could not allocate initial pages for sequence ID {}. Placing in waiting.", seq_ptr->sequence_id);
-                // TODO: Need a mechanism to retry allocation later for waiting sequences
-                waiting_sequences_.push_back(std::move(seq_ptr)); // Add to waiting list for now
-            }
+            seq_ptr->status = sequence::SequenceStatus::PREFILLING;
+            running_sequences_.emplace(seq_ptr->sequence_id, std::move(seq_ptr));
         }
-         // TODO: Also try to allocate pages for sequences in waiting_sequences_ here or in select_batch
     }
 
     std::pair<std::vector<uint64_t>, std::vector<uint64_t>> Scheduler::select_batch() {
         std::vector<uint64_t> prefill_seq_ids;
         std::vector<uint64_t> decode_seq_ids;
-        size_t current_batch_tokens = 0;
-
-        // --- Simple FCFS + State-Based Selection (Placeholder) ---
-        // Prioritize prefill? Or mix? This needs refinement.
-        // This basic version just iterates through running sequences.
-
-        for (auto const& [id, seq_ptr] : running_sequences_) {
-            if (seq_ptr->cancelled.load(std::memory_order_acquire)) {
-                continue; // Skip cancelled sequences
-            }
-
-            size_t tokens_for_seq = 0;
-            if (seq_ptr->status == sequence::SequenceStatus::PREFILLING) {
-                // Estimate tokens needed for prefill (can be complex, e.g., chunking)
-                tokens_for_seq = seq_ptr->prompt_len; // Simple: process full prompt
-                if (current_batch_tokens + tokens_for_seq <= max_tokens_in_batch_) {
-                    // TODO: Check if enough *contiguous* pages can be allocated for prefill chunk
-                    if (allocate_pages_for_sequence(*seq_ptr)) { // Re-check allocation might be needed if chunking
-                         prefill_seq_ids.push_back(id);
-                         current_batch_tokens += tokens_for_seq;
-                    } else {
-                         spdlog::trace("Scheduler: Cannot allocate pages for prefill seq {}, skipping.", id);
-                    }
-                }
-            } else if (seq_ptr->status == sequence::SequenceStatus::DECODING) {
-                tokens_for_seq = 1; // Decode processes one token at a time
-                if (current_batch_tokens + tokens_for_seq <= max_tokens_in_batch_) {
-                    // TODO: Check if a page needs to be allocated for the *next* token
-                     if (allocate_pages_for_sequence(*seq_ptr)) { // Check if allocation needed & possible
-                         decode_seq_ids.push_back(id);
-                         current_batch_tokens += tokens_for_seq;
-                     } else {
-                          spdlog::trace("Scheduler: Cannot allocate page for decode seq {}, skipping.", id);
-                     }
-                }
-            }
-
-            if (current_batch_tokens >= max_tokens_in_batch_ || (prefill_seq_ids.size() + decode_seq_ids.size()) >= max_num_seqs_) {
-                 break; // Batch capacity reached
-            }
-        }
 
         return {prefill_seq_ids, decode_seq_ids};
     }

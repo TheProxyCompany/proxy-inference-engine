@@ -16,7 +16,14 @@ namespace pie_core::ipc {
         ResponseReader(const std::string& response_shm_name = RESPONSE_QUEUE_SHM_NAME);
         ~ResponseReader();
 
-        std::optional<ResponseDeltaSlot> consume_next_delta(int timeout_ms = -1);
+        /**
+         * @brief Consumes the next available delta from the response queue.
+         * @param out_delta Reference to a ResponseDeltaSlot object to be populated.
+         * @param timeout_ms Timeout in milliseconds (-1 for blocking).
+         * @return True if a delta was successfully consumed and written to out_delta, false on timeout.
+         * @throws std::runtime_error If the underlying SHM is not initialized.
+         */
+        bool consume_next_delta(ResponseDeltaSlot& out_delta, int timeout_ms = -1);
 
         ResponseReader(const ResponseReader&) = delete;
         ResponseReader& operator=(const ResponseReader&) = delete;
@@ -37,7 +44,17 @@ namespace pie_core::ipc {
     };
 
     ResponseReader* get_global_ipc_consumer();
-    void init_global_ipc_consumer();
-    void shutdown_global_ipc_consumer();
+
+    /**
+     * @brief Initializes the global ResponseReader instance. Idempotent.
+     * @param name Shared memory name for the response queue.
+     * @throws std::runtime_error on initialization failure.
+     */
+    void init_global_response_reader(const std::string& name = RESPONSE_QUEUE_SHM_NAME);
+
+    /**
+     * @brief Shuts down and cleans up the global ResponseReader instance.
+     */
+    void shutdown_global_response_reader();
 
 } // namespace pie_core::ipc

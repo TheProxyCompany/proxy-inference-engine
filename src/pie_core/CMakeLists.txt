@@ -208,15 +208,6 @@ target_compile_definitions(
         $<$<CONFIG:Debug>:ENABLE_ASSERTIONS>
 )
 
-# Install Metal library alongside Python module
-if(MLX_BUILD_METAL AND TARGET pie_core_metallib)
-    install(
-        FILES ${CMAKE_CURRENT_BINARY_DIR}/pie_core.metallib
-        DESTINATION ${PROJECT_NAME}
-        COMPONENT python_modules
-    )
-endif()
-
 add_executable(${ENGINE_EXE_NAME} ${PIE_ENGINE_MAIN_SRC})
 add_dependencies(${ENGINE_EXE_NAME} ${CORE_LIB_NAME})
 
@@ -248,14 +239,45 @@ target_link_options(${ENGINE_EXE_NAME} PRIVATE
 )
 
 # --- Installation ---
+set(PYTHON_MODULE_INSTALL_DESTINATION "${PROJECT_NAME}")
+
+# Install the compiled C++ extension module (Python Bindings)
 install(
     TARGETS ${EXTENSION_NAME}
-    LIBRARY DESTINATION ${PROJECT_NAME}
+    LIBRARY DESTINATION ${PYTHON_MODULE_INSTALL_DESTINATION}
     COMPONENT python_modules
 )
 
+if(MLX_BUILD_METAL AND TARGET pie_core_metallib)
+    # Install the Metal library alongside the Python module
+    install(
+        FILES ${CMAKE_CURRENT_BINARY_DIR}/pie_core.metallib
+        DESTINATION ${PYTHON_MODULE_INSTALL_DESTINATION}
+        COMPONENT python_modules
+    )
+endif()
+
+# Install the standalone C++ engine executable
 install(
     TARGETS ${ENGINE_EXE_NAME}
     RUNTIME DESTINATION bin
     COMPONENT engine_executable
+)
+
+# --- Automatic Stub Generation ---
+nanobind_add_stub(
+    pie_core_stubgen_target
+    MODULE ${EXTENSION_NAME}
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${EXTENSION_NAME}.pyi
+    PYTHON_PATH $<TARGET_FILE_DIR:${EXTENSION_NAME}>
+    DEPENDS ${EXTENSION_NAME}
+    MARKER_FILE ${CMAKE_CURRENT_BINARY_DIR}/py.typed
+)
+
+install(
+    FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/${EXTENSION_NAME}.pyi
+        ${CMAKE_CURRENT_BINARY_DIR}/py.typed
+    DESTINATION ${PYTHON_MODULE_INSTALL_DESTINATION}
+    COMPONENT python_modules
 )
