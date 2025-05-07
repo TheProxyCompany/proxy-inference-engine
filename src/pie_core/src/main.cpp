@@ -5,7 +5,10 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include "models/model_factory.hpp"
-#include "ipc/ipc_producer.hpp"
+#include "engine/page_allocator.hpp"
+#include "engine/request_preprocessor.hpp"
+#include "ipc/request_writer.hpp"
+#include "ipc/request_reader.hpp"
 #include "ipc/shared_memory_manager.hpp"
 
 using json = nlohmann::json;
@@ -54,23 +57,39 @@ int main(int argc, char* argv[]) {
 
     try {
         spdlog::info("Loading model from: {}", model_path);
-        if (!ipc_name.empty()) {
-            spdlog::info("IPC mode enabled with shared memory name: {}", ipc_name);
-            std::unique_ptr<pie_core::ipc::SharedMemoryManager> bulk_data_shm_manager;
-            try {
-                bulk_data_shm_manager = std::make_unique<pie_core::ipc::SharedMemoryManager>(
-                    pie_core::ipc::BULK_DATA_SHM_NAME,
-                    pie_core::ipc::BULK_DATA_SHM_SIZE,
-                    true
-                );
-            } catch (const pie_core::ipc::SharedMemoryError& e) {
-                std::cerr << "FATAL: Failed to initialize bulk data SHM: " << e.what() << std::endl;
-                return 1;
-            }
-        }
+        // ---------- heavyweight objects ----------
+        auto model = pie_core::models::load_model(model_path);
+        pie_core::engine::PageAllocator allocator(
+            8192,
+            model->get_num_kv_heads(),
+            model->get_head_dim()
+        );
+
+        // ---------- IPC mode ----------
+        auto bulk_data_shm_manager = std::make_unique<pie_core::ipc::SharedMemoryManager>(
+            pie_core::ipc::BULK_DATA_SHM_NAME,
+            pie_core::ipc::BULK_DATA_SHM_SIZE,
+            true
+        );
+
+        using RawQ = pie_core::ipc::RequestReader::RawRequestQueue;
+        using SeqQ = pie_core::engine::RequestPreprocessor::ProcessedSequenceQueue;
+        RawQ raw_q;   SeqQ seq_q;
+
+        pie_core::ipc::RequestReader reader(raw_q, *bulk_data_shm_manager, ipc_name);
+        std::thread reader_t([&]{ reader.run(); });
+
+        pie_core::engine::RequestPreprocessor preproc(raw_q, seq_q, *bulk_data_shm_manager, model_path);
+        preproc.start();
+
         spdlog::info("Engine initialized successfully");
         // Main loop would go here
         spdlog::info("Engine shutting down");
+        // ---------- shutdown ----------
+        reader.stop();
+        reader_t.join();
+        preproc.stop_and_join();
+        spdlog::info("Bye!");
         return 0;
     } catch (const std::exception& e) {
         spdlog::critical("Fatal error: {}", e.what());

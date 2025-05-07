@@ -78,12 +78,5 @@ namespace pie_core::engine {
          * Should equal `token_ids.shape[0]` and `sum(input_lengths)`.
          */
         size_t total_tokens_in_step = 0;
-
-        /**
-         * @brief Optional explicit attention mask if needed beyond implicit causal masking.
-         * Often, the context_lengths and block table are sufficient for the kernel.
-         * If used, shape might be complex, e.g., related to total_tokens_in_step.
-         */
-        std::optional<mx::array> attention_mask;
     };
 } // namespace pie_core::engine

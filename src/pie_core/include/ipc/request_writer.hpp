@@ -60,8 +60,8 @@ namespace pie_core::ipc {
         std::unique_ptr<SharedMemoryManager> bulk_shm_manager_;
     };
 
-    RequestWriter* get_global_ipc_producer();
-    void init_global_ipc_producer();
-    void shutdown_global_ipc_producer();
+    RequestWriter* get_global_request_writer();
+    void init_global_request_writer();
+    void shutdown_global_request_writer();
 
 } // namespace pie_core::ipc

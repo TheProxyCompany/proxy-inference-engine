@@ -218,7 +218,27 @@ if(MLX_BUILD_METAL AND TARGET pie_core_metallib)
 endif()
 
 add_executable(${ENGINE_EXE_NAME} ${PIE_ENGINE_MAIN_SRC})
-target_link_libraries(${ENGINE_EXE_NAME} PRIVATE ${CORE_LIB_NAME})
+add_dependencies(${ENGINE_EXE_NAME} ${CORE_LIB_NAME})
+
+if(APPLE)
+    target_link_libraries(${ENGINE_EXE_NAME} PRIVATE
+        "-Wl,-force_load,$<TARGET_FILE:${CORE_LIB_NAME}>"
+        ${PSE_CORE_LINK_TARGET}
+        mlx
+        tokenizers_cpp
+        nlohmann_json::nlohmann_json
+        spdlog::spdlog_header_only
+    )
+else()
+    target_link_libraries(${ENGINE_EXE_NAME} PRIVATE
+        "-Wl,--whole-archive" $<TARGET_FILE:${CORE_LIB_NAME}> "-Wl,--no-whole-archive"
+        ${PSE_CORE_LINK_TARGET}
+        mlx
+        tokenizers_cpp
+        nlohmann_json::nlohmann_json
+        spdlog::spdlog_header_only
+    )
+endif()
 
 target_compile_options(${ENGINE_EXE_NAME} PRIVATE
     $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>

@@ -18,7 +18,7 @@ namespace pie_core::ipc {
         kernel_event_fd_(kernel_event_fd)
     {
         if (!initialize_ipc_resources(request_shm_name)) {
-            throw std::runtime_error("Failed to initialize IPC resources");
+            throw std::runtime_error("RequestReader: Failed to initialize IPC resources");
         }
     }
 

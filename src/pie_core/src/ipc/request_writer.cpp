@@ -17,15 +17,15 @@ namespace pie_core::ipc {
     // --- Global Instance Management ---
     std::unique_ptr<RequestWriter> global_producer_instance = nullptr;
 
-    RequestWriter* get_global_ipc_producer() {
+    RequestWriter* get_global_request_writer() {
         if (!global_producer_instance) {
-            throw std::runtime_error("RequestWriter global instance not initialized. Call init_global_ipc_producer() from Python first.");
+            throw std::runtime_error("RequestWriter global instance not initialized. Call init_global_request_writer() from Python first.");
         }
         return global_producer_instance.get();
     }
 
 
-    void init_global_ipc_producer() {
+    void init_global_request_writer() {
         if (!global_producer_instance) {
             try {
                 global_producer_instance = std::make_unique<RequestWriter>();
@@ -35,7 +35,7 @@ namespace pie_core::ipc {
         }
     }
 
-    void shutdown_global_ipc_producer() {
+    void shutdown_global_request_writer() {
         global_producer_instance.reset();
     }
 

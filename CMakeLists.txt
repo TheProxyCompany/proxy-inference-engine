@@ -11,6 +11,7 @@ endif()
 
 if(APPLE)
   set(CMAKE_BUILD_PARALLEL_LEVEL $(sysctl -n hw.physicalcpu))
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version" FORCE)
 elseif(UNIX)
   set(CMAKE_BUILD_PARALLEL_LEVEL $(nproc))
 elseif(WIN32)
