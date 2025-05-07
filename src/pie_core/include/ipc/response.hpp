@@ -14,8 +14,8 @@ namespace pie_core::ipc {
     enum class ResponseSlotState : uint32_t {
         FREE_FOR_CPP_WRITER = 0, // Slot is available for C++ IPCWriter
         CPP_WRITING = 1,         // C++ IPCWriter is writing to this slot
-        READY_FOR_PYTHON = 2,    // Slot is ready for Python IPCConsumer to read
-        PYTHON_READING = 3       // Python IPCConsumer is reading from this slot
+        READY_FOR_PYTHON = 2,    // Slot is ready for Python ResponseReader to read
+        PYTHON_READING = 3       // Python ResponseReader is reading from this slot
     };
 
     struct alignas(64) ResponseDeltaSlot {
@@ -36,7 +36,7 @@ namespace pie_core::ipc {
     // Control block for the response queue
     struct alignas(64) ResponseQueueControl {
         std::atomic<uint64_t> producer_idx{0}; // Written by C++ IPCWriter
-        std::atomic<uint64_t> consumer_idx{0}; // Written by Python's IPCConsumer binding
+        std::atomic<uint64_t> consumer_idx{0}; // Written by Python's ResponseReader binding
     };
 
 } // namespace pie_core::ipc

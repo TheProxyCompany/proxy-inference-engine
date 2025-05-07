@@ -37,7 +37,7 @@ namespace pie_core::ipc {
         );
         ~RequestReader();
 
-        void run();
+        void start();
         void stop();
 
         RequestReader(const RequestReader&) = delete;

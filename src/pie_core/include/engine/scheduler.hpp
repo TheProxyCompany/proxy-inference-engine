@@ -6,7 +6,6 @@
 
 namespace pie_core {
     class PageAllocator;
-    class Sequence;
     class IModel;
 }
 

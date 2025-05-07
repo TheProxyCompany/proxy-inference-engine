@@ -27,7 +27,7 @@ namespace pie_core::ipc {
         cleanup_ipc_resources();
     }
 
-    void RequestReader::run() {
+    void RequestReader::start() {
         running_.store(true, std::memory_order_release);
         while (running_.load(std::memory_order_acquire)) {
             if (!wait_for_notification()) {          // timeout or error

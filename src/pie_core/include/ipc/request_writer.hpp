@@ -9,6 +9,7 @@
 #include <vector>
 #include <cstdint>
 
+// exposed via nanobind to python
 namespace pie_core::ipc {
 
     constexpr const char* BULK_DATA_SHM_NAME = "/pie_bulk_data";

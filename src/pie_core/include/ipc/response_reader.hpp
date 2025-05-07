@@ -6,19 +6,20 @@
 #include <cstdint>
 #include <memory>
 
+// exposed via nanobind to python
 namespace pie_core::ipc {
 
     struct ResponseDeltaSlot;
 
-    class IPCConsumer {
+    class ResponseReader {
     public:
-        IPCConsumer(const std::string& response_shm_name = RESPONSE_QUEUE_SHM_NAME);
-        ~IPCConsumer();
+        ResponseReader(const std::string& response_shm_name = RESPONSE_QUEUE_SHM_NAME);
+        ~ResponseReader();
 
         std::optional<ResponseDeltaSlot> consume_next_delta(int timeout_ms = -1);
 
-        IPCConsumer(const IPCConsumer&) = delete;
-        IPCConsumer& operator=(const IPCConsumer&) = delete;
+        ResponseReader(const ResponseReader&) = delete;
+        ResponseReader& operator=(const ResponseReader&) = delete;
 
     private:
         std::string response_shm_name_;
@@ -35,7 +36,7 @@ namespace pie_core::ipc {
         bool wait_for_event(int timeout_ms);
     };
 
-    IPCConsumer* get_global_ipc_consumer();
+    ResponseReader* get_global_ipc_consumer();
     void init_global_ipc_consumer();
     void shutdown_global_ipc_consumer();
 
