@@ -1,4 +1,4 @@
-#include "ipc/ipc_producer.hpp"
+#include "ipc/request_writer.hpp"
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -15,11 +15,11 @@
 namespace pie_core::ipc {
 
     // --- Global Instance Management ---
-    std::unique_ptr<IPCProducer> global_producer_instance = nullptr;
+    std::unique_ptr<RequestWriter> global_producer_instance = nullptr;
 
-    IPCProducer* get_global_ipc_producer() {
+    RequestWriter* get_global_ipc_producer() {
         if (!global_producer_instance) {
-            throw std::runtime_error("IPCProducer global instance not initialized. Call init_global_ipc_producer() from Python first.");
+            throw std::runtime_error("RequestWriter global instance not initialized. Call init_global_ipc_producer() from Python first.");
         }
         return global_producer_instance.get();
     }
@@ -28,9 +28,9 @@ namespace pie_core::ipc {
     void init_global_ipc_producer() {
         if (!global_producer_instance) {
             try {
-                global_producer_instance = std::make_unique<IPCProducer>();
+                global_producer_instance = std::make_unique<RequestWriter>();
             } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("Failed to initialize global IPCProducer: ") + e.what());
+                throw std::runtime_error(std::string("Failed to initialize global RequestWriter: ") + e.what());
             }
         }
     }
@@ -40,26 +40,26 @@ namespace pie_core::ipc {
     }
 
 
-    IPCProducer::IPCProducer(const std::string& request_shm_name, const std::string& bulk_shm_name) :
+    RequestWriter::RequestWriter(const std::string& request_shm_name, const std::string& bulk_shm_name) :
         request_shm_name_(request_shm_name),
         bulk_shm_name_(bulk_shm_name)
     {
         if (!initialize_ipc_resources()) {
-            throw std::runtime_error("IPCProducer: Failed to initialize IPC resources.");
+            throw std::runtime_error("RequestWriter: Failed to initialize IPC resources.");
         }
         #if defined(__APPLE__)
             kernel_event_fd_ = -1;
             kqueue_ident_ = 1;
-            spdlog::warn("IPCProducer: kqueue event triggering from a separate process needs a robust mechanism (e.g., nanobind call to engine's kqueue trigger function or named pipe).");
+            spdlog::warn("RequestWriter: kqueue event triggering from a separate process needs a robust mechanism (e.g., nanobind call to engine's kqueue trigger function or named pipe).");
         #elif defined(__linux__)
             kernel_event_fd_ = -1; // Placeholder
-            spdlog::warn("IPCProducer: eventfd mechanism needs the engine's eventfd to be accessible by the producer process.");
+            spdlog::warn("RequestWriter: eventfd mechanism needs the engine's eventfd to be accessible by the producer process.");
         #else
             #error "Kernel event notification not implemented for this platform."
         #endif
     }
 
-    IPCProducer::~IPCProducer() {
+    RequestWriter::~RequestWriter() {
         cleanup_ipc_resources();
         if (kernel_event_fd_ != -1 && (
             #if defined(__linux__) // Only close if it's an FD we opened
@@ -70,28 +70,28 @@ namespace pie_core::ipc {
         )) {
             close(kernel_event_fd_);
         }
-        spdlog::info("IPCProducer destroyed.");
+        spdlog::info("RequestWriter destroyed.");
     }
 
-    bool IPCProducer::initialize_ipc_resources() {
-        spdlog::info("IPCProducer: Initializing IPC resources...");
+    bool RequestWriter::initialize_ipc_resources() {
+        spdlog::info("RequestWriter: Initializing IPC resources...");
 
         // 1. Initialize Request Queue SHM (Open Existing)
         request_shm_fd_ = shm_open(request_shm_name_.c_str(), O_RDWR, 0);
         if (request_shm_fd_ == -1) {
-            spdlog::error("IPCProducer: shm_open for request queue '{}' failed: {}", request_shm_name_, strerror(errno));
+            spdlog::error("RequestWriter: shm_open for request queue '{}' failed: {}", request_shm_name_, strerror(errno));
             return false;
         }
-        spdlog::info("IPCProducer: Opened request SHM '{}', fd={}", request_shm_name_, request_shm_fd_);
+        spdlog::info("RequestWriter: Opened request SHM '{}', fd={}", request_shm_name_, request_shm_fd_);
 
         // 2. Map Request Queue SHM
         request_shm_map_ptr_ = mmap(nullptr, REQUEST_QUEUE_SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, request_shm_fd_, 0);
         if (request_shm_map_ptr_ == MAP_FAILED) {
-            spdlog::error("IPCProducer: mmap for request queue '{}' failed: {}", request_shm_name_, strerror(errno));
+            spdlog::error("RequestWriter: mmap for request queue '{}' failed: {}", request_shm_name_, strerror(errno));
             close(request_shm_fd_); request_shm_fd_ = -1;
             return false;
         }
-        spdlog::debug("IPCProducer: Mapped request SHM '{}' at address {:p}", request_shm_name_, request_shm_map_ptr_);
+        spdlog::debug("RequestWriter: Mapped request SHM '{}' at address {:p}", request_shm_name_, request_shm_map_ptr_);
 
         // 3. Initialize Request Queue Control
         request_queue_control_ = static_cast<RequestQueueControl*>(request_shm_map_ptr_);
@@ -105,50 +105,50 @@ namespace pie_core::ipc {
                 false
             );
             bulk_shm_map_ptr_ = bulk_shm_manager_->get_segment_base_address();
-            spdlog::info("IPCProducer: SharedMemoryManager for bulk data SHM '{}' initialized.", bulk_shm_name_);
+            spdlog::info("RequestWriter: SharedMemoryManager for bulk data SHM '{}' initialized.", bulk_shm_name_);
         } catch (const std::exception& e) {
-            spdlog::error("IPCProducer: Error initializing SharedMemoryManager'{}': {}", bulk_shm_name_, e.what());
+            spdlog::error("RequestWriter: Error initializing SharedMemoryManager'{}': {}", bulk_shm_name_, e.what());
             if (request_shm_map_ptr_ != MAP_FAILED) munmap(request_shm_map_ptr_, REQUEST_QUEUE_SHM_SIZE);
             if (request_shm_fd_ != -1) close(request_shm_fd_);
             request_shm_map_ptr_ = nullptr; request_shm_fd_ = -1;
             return false;
         }
 
-        spdlog::info("IPCProducer: IPC resources initialized successfully.");
+        spdlog::info("RequestWriter: IPC resources initialized successfully.");
         return true;
     }
 
-    void IPCProducer::cleanup_ipc_resources() {
-        spdlog::info("IPCProducer: Cleaning up IPC resources...");
+    void RequestWriter::cleanup_ipc_resources() {
+        spdlog::info("RequestWriter: Cleaning up IPC resources...");
 
         bulk_shm_manager_.reset();
 
         // Cleanup Request Queue SHM
         if (request_shm_map_ptr_ != nullptr && request_shm_map_ptr_ != MAP_FAILED) {
             if (munmap(request_shm_map_ptr_, REQUEST_QUEUE_SHM_SIZE) == -1) {
-                spdlog::error("IPCProducer: munmap for request queue '{}' failed: {}", request_shm_name_, strerror(errno));
+                spdlog::error("RequestWriter: munmap for request queue '{}' failed: {}", request_shm_name_, strerror(errno));
             }
             request_shm_map_ptr_ = nullptr;
         }
         if (request_shm_fd_ != -1) {
             if (close(request_shm_fd_) == -1) {
-                spdlog::error("IPCProducer: close for request queue fd {} failed: {}", request_shm_fd_, strerror(errno));
+                spdlog::error("RequestWriter: close for request queue fd {} failed: {}", request_shm_fd_, strerror(errno));
             }
             request_shm_fd_ = -1;
         }
         request_queue_control_ = nullptr;
         request_slots_ = nullptr;
-        spdlog::info("IPCProducer: IPC resources cleaned up.");
+        spdlog::info("RequestWriter: IPC resources cleaned up.");
     }
 
-    uint64_t IPCProducer::write_prompt_to_bulk_shm(const std::string& prompt_string) {
+    uint64_t RequestWriter::write_prompt_to_bulk_shm(const std::string& prompt_string) {
         if (!bulk_shm_manager_) {
-            throw std::runtime_error("IPCProducer: Bulk SHM manager not initialized for writing prompt.");
+            throw std::runtime_error("RequestWriter: Bulk SHM manager not initialized for writing prompt.");
         }
 
         size_t data_size = prompt_string.length();
         if (data_size == 0) {
-            spdlog::warn("IPCProducer: Attempting to write an empty prompt string to bulk SHM.");
+            spdlog::warn("RequestWriter: Attempting to write an empty prompt string to bulk SHM.");
             data_size = 1; // Allocate 1 byte for empty string to get a valid ptr
         }
 
@@ -156,12 +156,12 @@ namespace pie_core::ipc {
         try {
             shm_block_ptr = bulk_shm_manager_->allocate(data_size);
         } catch (const SharedMemoryError& e) {
-            spdlog::error("IPCProducer: Failed to allocate {} bytes in bulk SHM for prompt: {}", data_size, e.what());
+            spdlog::error("RequestWriter: Failed to allocate {} bytes in bulk SHM for prompt: {}", data_size, e.what());
             throw; // Re-throw
         }
 
         if (!shm_block_ptr) {
-            throw std::runtime_error("IPCProducer: Bulk SHM allocation returned nullptr for prompt.");
+            throw std::runtime_error("RequestWriter: Bulk SHM allocation returned nullptr for prompt.");
         }
 
         if (!prompt_string.empty()) {
@@ -173,30 +173,30 @@ namespace pie_core::ipc {
         void* bulk_shm_base = bulk_shm_manager_->get_segment_base_address();
         if (!bulk_shm_base) {
             bulk_shm_manager_->deallocate(shm_block_ptr);
-            throw std::runtime_error("IPCProducer: Could not get bulk SHM base address for offset calculation.");
+            throw std::runtime_error("RequestWriter: Could not get bulk SHM base address for offset calculation.");
         }
         uint64_t offset = static_cast<char*>(shm_block_ptr) - static_cast<char*>(bulk_shm_base);
 
-        spdlog::debug("IPCProducer: Wrote prompt of size {} to bulk SHM at offset {}", prompt_string.length(), offset);
+        spdlog::debug("RequestWriter: Wrote prompt of size {} to bulk SHM at offset {}", prompt_string.length(), offset);
         return offset;
     }
 
-    void IPCProducer::trigger_kernel_event() {
+    void RequestWriter::trigger_kernel_event() {
         #if defined(__APPLE__)
             struct kevent change;
             EV_SET(&change, kqueue_ident_, EVFILT_USER, 0, NOTE_TRIGGER, 0, nullptr); // Trigger user event
             if (kevent(kernel_event_fd_, &change, 1, nullptr, 0, nullptr) == -1) {
-                perror("IPCProducer: kevent trigger failed");
+                perror("RequestWriter: kevent trigger failed");
             }
         #elif defined(__linux__)
             uint64_t u = 1;
             if (write(kernel_event_fd_, &u, sizeof(uint64_t)) != sizeof(uint64_t)) {
-                perror("IPCProducer: eventfd write failed");
+                perror("RequestWriter: eventfd write failed");
             }
         #endif
     }
 
-    uint64_t IPCProducer::submit_request_to_engine(
+    uint64_t RequestWriter::submit_request_to_engine(
         uint64_t request_id,
         const std::string& prompt_string,
         const sequence::SamplingParams& sampling_params,
@@ -207,10 +207,10 @@ namespace pie_core::ipc {
         const std::string& response_format_str
     ) {
         if (!request_queue_control_ || !request_slots_) {
-            throw std::runtime_error("IPCProducer: SHM for requests not initialized.");
+            throw std::runtime_error("RequestWriter: SHM for requests not initialized.");
         }
         if (!bulk_shm_map_ptr_) {
-            throw std::runtime_error("IPCProducer: Bulk SHM not initialized.");
+            throw std::runtime_error("RequestWriter: Bulk SHM not initialized.");
         }
 
         // 1. Write prompt to bulk SHM
@@ -231,7 +231,7 @@ namespace pie_core::ipc {
             expected_free = RequestState::FREE; // Reset for next attempt
             spin_count++;
             if (spin_count > max_spins) {
-                throw std::runtime_error("IPCProducer: Timeout waiting for a free request slot. Engine might be stuck or queue full.");
+                throw std::runtime_error("RequestWriter: Timeout waiting for a free request slot. Engine might be stuck or queue full.");
             }
             std::this_thread::sleep_for(std::chrono::microseconds(1));
         }

@@ -64,7 +64,6 @@ PageAllocator::PageAllocator(
 }
 
 // --- Public Methods Implementation ---
-
 std::optional<uint32_t> PageAllocator::allocate_page() {
     FreeNode* node = pop_free_list();
     if (node == nullptr) {

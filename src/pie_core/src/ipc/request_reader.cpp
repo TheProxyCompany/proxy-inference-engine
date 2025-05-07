@@ -1,4 +1,4 @@
-#include "ipc/ipc_reader.hpp"
+#include "ipc/request_reader.hpp"
 #include "engine/raw_request.hpp"
 
 #include <sys/event.h>      // kqueue
@@ -7,7 +7,7 @@
 
 namespace pie_core::ipc {
 
-    IPCReader::IPCReader(
+    RequestReader::RequestReader(
         RawRequestQueue& output_queue,
         SharedMemoryManager& shm_manager,
         const std::string& request_shm_name,
@@ -17,18 +17,17 @@ namespace pie_core::ipc {
         shm_manager_(shm_manager),
         kernel_event_fd_(kernel_event_fd)
     {
-
         if (!initialize_ipc_resources(request_shm_name)) {
             throw std::runtime_error("Failed to initialize IPC resources");
         }
     }
 
-    IPCReader::~IPCReader() {
+    RequestReader::~RequestReader() {
         stop();
         cleanup_ipc_resources();
     }
 
-    void IPCReader::run() {
+    void RequestReader::run() {
         running_.store(true, std::memory_order_release);
         while (running_.load(std::memory_order_acquire)) {
             if (!wait_for_notification()) {          // timeout or error
@@ -38,11 +37,11 @@ namespace pie_core::ipc {
         }
     }
 
-    void IPCReader::stop() {
+    void RequestReader::stop() {
         running_.store(false, std::memory_order_release);
     }
 
-    bool IPCReader::initialize_ipc_resources(const std::string& name) {
+    bool RequestReader::initialize_ipc_resources(const std::string& name) {
         request_shm_fd_ = shm_open(
             name.c_str(),
             O_RDWR,
@@ -77,7 +76,7 @@ namespace pie_core::ipc {
         return true;
     }
 
-    void IPCReader::cleanup_ipc_resources() {
+    void RequestReader::cleanup_ipc_resources() {
         if (request_shm_map_ptr_) {
             munmap(request_shm_map_ptr_, REQUEST_QUEUE_SHM_SIZE);
         }
@@ -86,9 +85,8 @@ namespace pie_core::ipc {
         }
     }
 
-    bool IPCReader::wait_for_notification() {
+    bool RequestReader::wait_for_notification() {
         /* Plain kqueue one-shot wait */
-        // TODO redo this
         struct kevent Kev;
         EV_SET(&Kev, /*ident*/kernel_event_fd_, EVFILT_READ,
                EV_ADD | EV_ENABLE | EV_CLEAR, 0, 0, nullptr);
@@ -105,7 +103,7 @@ namespace pie_core::ipc {
         return nevents > 0;
     }
 
-    void IPCReader::process_incoming_requests() {
+    void RequestReader::process_incoming_requests() {
         auto prod = request_queue_control_->producer_idx.load(std::memory_order_acquire);
         auto cons = request_queue_control_->consumer_idx.load(std::memory_order_relaxed);
 
@@ -135,7 +133,7 @@ namespace pie_core::ipc {
             raw->response_format_str  = slot.response_format_str;
 
             if (!output_queue_.push(std::move(raw))) {
-                spdlog::error("IPCReader: RawRequestQueue full – dropping request {}", slot.request_id);
+                spdlog::error("RequestReader: RawRequestQueue full – dropping request {}", slot.request_id);
                 slot.state.store(RequestState::FREE, std::memory_order_release);
                 break;      // prevent producer from racing with us
             }
@@ -147,7 +145,7 @@ namespace pie_core::ipc {
         }
     }
 
-    std::string IPCReader::read_prompt_string(uint64_t offset, uint64_t size) {
+    std::string RequestReader::read_prompt_string(uint64_t offset, uint64_t size) {
         char* base = static_cast<char*>(bulk_data_map_ptr_);
         return std::string(base + offset, size);
     }

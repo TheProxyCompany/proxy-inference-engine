@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ipc_response.hpp"
+#include "response.hpp"
 #include <string>
 #include <optional>
 #include <cstdint>

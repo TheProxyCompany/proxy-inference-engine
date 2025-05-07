@@ -6,7 +6,7 @@
 #include "sequence/stop_criteria.hpp"
 #include "sequence/ipc_handles.hpp"
 #include "engine/raw_request.hpp"
-#include "ipc/ipc_request.hpp"
+#include "ipc/request.hpp"
 #include "ipc/shared_memory_manager.hpp"
 #include <boost/lockfree/spsc_queue.hpp>
 
@@ -20,8 +20,8 @@
 
 namespace pie_core::ipc {
 
-    // --- IPCReader Class ---
-    class IPCReader {
+    // --- RequestReader Class ---
+    class RequestReader {
     public:
 
         using RawRequestQueue = boost::lockfree::spsc_queue<
@@ -29,21 +29,21 @@ namespace pie_core::ipc {
             boost::lockfree::capacity<1024>
         >;
 
-        IPCReader(
+        RequestReader(
             RawRequestQueue& output_queue,
             SharedMemoryManager& shm_manager,
             const std::string& request_shm_name = REQUEST_QUEUE_SHM_NAME,
             int kernel_event_fd = -1
         );
-        ~IPCReader();
+        ~RequestReader();
 
         void run();
         void stop();
 
-        IPCReader(const IPCReader&) = delete;
-        IPCReader& operator=(const IPCReader&) = delete;
-        IPCReader(IPCReader&&) = delete;
-        IPCReader& operator=(IPCReader&&) = delete;
+        RequestReader(const RequestReader&) = delete;
+        RequestReader& operator=(const RequestReader&) = delete;
+        RequestReader(RequestReader&&) = delete;
+        RequestReader& operator=(RequestReader&&) = delete;
 
     private:
         int request_shm_fd_ = -1;

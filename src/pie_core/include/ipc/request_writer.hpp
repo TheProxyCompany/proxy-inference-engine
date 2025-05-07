@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ipc_request.hpp"
+#include "request.hpp"
 #include "sequence/sampling_params.hpp"
 #include "sequence/logits_params.hpp"
 #include "sequence/stop_criteria.hpp"
@@ -14,13 +14,13 @@ namespace pie_core::ipc {
     constexpr const char* BULK_DATA_SHM_NAME = "/pie_bulk_data";
     constexpr size_t BULK_DATA_SHM_SIZE = 1024 * 1024 * 256; // 256MB
 
-    class IPCProducer {
+    class RequestWriter {
     public:
-        IPCProducer(
+        RequestWriter(
             const std::string& request_shm_name = REQUEST_QUEUE_SHM_NAME,
             const std::string& bulk_shm_name = BULK_DATA_SHM_NAME
         );
-        ~IPCProducer();
+        ~RequestWriter();
 
         uint64_t submit_request_to_engine(
             uint64_t request_id,
@@ -33,8 +33,8 @@ namespace pie_core::ipc {
             const std::string& response_format_str
         );
 
-        IPCProducer(const IPCProducer&) = delete;
-        IPCProducer& operator=(const IPCProducer&) = delete;
+        RequestWriter(const RequestWriter&) = delete;
+        RequestWriter& operator=(const RequestWriter&) = delete;
 
     private:
         std::string request_shm_name_;
@@ -60,7 +60,7 @@ namespace pie_core::ipc {
         std::unique_ptr<SharedMemoryManager> bulk_shm_manager_;
     };
 
-    IPCProducer* get_global_ipc_producer();
+    RequestWriter* get_global_ipc_producer();
     void init_global_ipc_producer();
     void shutdown_global_ipc_producer();
 

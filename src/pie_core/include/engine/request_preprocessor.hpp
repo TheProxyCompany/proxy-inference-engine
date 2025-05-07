@@ -30,7 +30,7 @@ namespace pie_core::engine {
 
         /**
          * @brief Constructor.
-         * @param input_raw_requests_queue Reference to the SPSC queue from IPCReader.
+         * @param input_raw_requests_queue Reference to the SPSC queue from RequestReader.
          * @param output_sequences_queue Reference to the SPSC queue for the Scheduler.
          * @param shm_manager Shared memory manager for prompt access.
          * @param model_path Path to the tokenizer model/config files.
