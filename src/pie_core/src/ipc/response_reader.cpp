@@ -91,8 +91,12 @@ namespace pie_core::ipc {
         }
         spdlog::debug("ResponseReader: Mapped response SHM '{}' at address {:p}", response_shm_name_, response_shm_map_ptr_);
 
+        // Control block is at the beginning of the shared memory
         response_queue_control_ = static_cast<ResponseQueueControl*>(response_shm_map_ptr_);
+        // Slots start after the control block
         response_slots_ = reinterpret_cast<ResponseDeltaSlot*>(static_cast<char*>(response_shm_map_ptr_) + sizeof(ResponseQueueControl));
+        spdlog::debug("ResponseReader: Set up response_queue_control_ at {:p}, response_slots_ at {:p}",
+                     (void*)response_queue_control_, (void*)response_slots_);
 
         return true;
     }

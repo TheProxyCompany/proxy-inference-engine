@@ -106,25 +106,29 @@ namespace pie_core::ipc {
 
         // Specifically initialize atomic indices to 0 if it's a known queue type
         if (name == REQUEST_QUEUE_SHM_NAME) {
+             // Control block is at the beginning of the shared memory
              RequestQueueControl* control = static_cast<RequestQueueControl*>(map_ptr);
              control->producer_idx.store(0, std::memory_order_relaxed);
              control->consumer_idx.store(0, std::memory_order_relaxed);
-             // Initialize slot states to FREE
+             // Initialize slot states to FREE (slots start after the control block)
              RequestSlot* slots = reinterpret_cast<RequestSlot*>(static_cast<char*>(map_ptr) + sizeof(RequestQueueControl));
              for (size_t i = 0; i < REQUEST_QUEUE_NUM_SLOTS; ++i) {
                  slots[i].state.store(RequestState::FREE, std::memory_order_relaxed);
              }
-             spdlog::info("IPCManager: Initialized RequestQueueControl for '{}'", name);
+             spdlog::info("IPCManager: Initialized RequestQueueControl at {:p} and slots at {:p} for '{}'",
+                         (void*)control, (void*)slots, name);
         } else if (name == RESPONSE_QUEUE_SHM_NAME) {
+            // Control block is at the beginning of the shared memory
             ResponseQueueControl* control = static_cast<ResponseQueueControl*>(map_ptr);
-             control->producer_idx.store(0, std::memory_order_relaxed);
-             control->consumer_idx.store(0, std::memory_order_relaxed);
-             // Initialize slot states to FREE_FOR_CPP_WRITER
-             ResponseDeltaSlot* slots = reinterpret_cast<ResponseDeltaSlot*>(static_cast<char*>(map_ptr) + sizeof(ResponseQueueControl));
-             for (size_t i = 0; i < RESPONSE_QUEUE_NUM_SLOTS; ++i) {
-                 slots[i].state.store(ResponseSlotState::FREE_FOR_CPP_WRITER, std::memory_order_relaxed);
-             }
-             spdlog::info("IPCManager: Initialized ResponseQueueControl for '{}'", name);
+            control->producer_idx.store(0, std::memory_order_relaxed);
+            control->consumer_idx.store(0, std::memory_order_relaxed);
+            // Initialize slot states to FREE_FOR_CPP_WRITER (slots start after the control block)
+            ResponseDeltaSlot* slots = reinterpret_cast<ResponseDeltaSlot*>(static_cast<char*>(map_ptr) + sizeof(ResponseQueueControl));
+            for (size_t i = 0; i < RESPONSE_QUEUE_NUM_SLOTS; ++i) {
+                slots[i].state.store(ResponseSlotState::FREE_FOR_CPP_WRITER, std::memory_order_relaxed);
+            }
+            spdlog::info("IPCManager: Initialized ResponseQueueControl at {:p} and slots at {:p} for '{}'",
+                         (void*)control, (void*)slots, name);
         }
 
 

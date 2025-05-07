@@ -28,7 +28,7 @@ void print_usage() {
 int main(int argc, char* argv[]) {
     // Initialize logging
     spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%s:%#] %v");
-    spdlog::set_level(spdlog::level::info);
+    spdlog::set_level(spdlog::level::debug);
 
     spdlog::info("Proxy Inference Engine starting up");
 

@@ -45,16 +45,19 @@ namespace pie_core::ipc {
     };
 
     constexpr size_t REQUEST_QUEUE_NUM_SLOTS = 1024;
-    constexpr size_t REQUEST_QUEUE_SHM_SIZE = REQUEST_QUEUE_NUM_SLOTS * sizeof(RequestSlot);
+    constexpr size_t REQUEST_QUEUE_SLOTS_BYTES = REQUEST_QUEUE_NUM_SLOTS * sizeof(RequestSlot);
+
+    // Define control block structure before using it in size calculation
+    struct alignas(64) RequestQueueControl {
+        std::atomic<uint64_t> producer_idx{0};
+        std::atomic<uint64_t> consumer_idx{0};
+    };
+
+    constexpr size_t REQUEST_QUEUE_SHM_SIZE = sizeof(RequestQueueControl) + REQUEST_QUEUE_SLOTS_BYTES; // Control block first, then slots
 #if defined(__APPLE__)
     constexpr const char* REQUEST_QUEUE_SHM_NAME = "/pie_request_slots";
 #else
     constexpr const char* REQUEST_QUEUE_SHM_NAME = "pie_request_slots";
 #endif
-
-    struct alignas(64) RequestQueueControl {
-        std::atomic<uint64_t> producer_idx{0};
-        std::atomic<uint64_t> consumer_idx{0};
-    };
 
 } // namespace pie_core::ipc

@@ -51,9 +51,9 @@ namespace pie_core::layers {
         void collect_parameters(std::vector<mx::array*>& params);
 
     private:
+        bool should_bias_;
         mx::array weights_;
         std::optional<mx::array> bias_;
-        bool should_bias_;
     };
 
 } // namespace pie_core::layers

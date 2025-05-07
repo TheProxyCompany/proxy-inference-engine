@@ -35,17 +35,19 @@ namespace pie_core::ipc {
 
     // --- Response Queue ---
     constexpr size_t RESPONSE_QUEUE_NUM_SLOTS = 1024;
-    constexpr size_t RESPONSE_QUEUE_SHM_SIZE = RESPONSE_QUEUE_NUM_SLOTS * sizeof(ResponseDeltaSlot);
+    constexpr size_t RESPONSE_QUEUE_SLOTS_BYTES = RESPONSE_QUEUE_NUM_SLOTS * sizeof(ResponseDeltaSlot);
+
+    // Control block for the response queue - define before using in size calculation
+    struct alignas(64) ResponseQueueControl {
+        std::atomic<uint64_t> producer_idx{0}; // Written by C++ IPCWriter
+        std::atomic<uint64_t> consumer_idx{0}; // Written by Python's ResponseReader binding
+    };
+
+    constexpr size_t RESPONSE_QUEUE_SHM_SIZE = sizeof(ResponseQueueControl) + RESPONSE_QUEUE_SLOTS_BYTES; // Control block first, then slots
 #if defined(__APPLE__)
     constexpr const char* RESPONSE_QUEUE_SHM_NAME = "/pie_response_slots";
 #else
     constexpr const char* RESPONSE_QUEUE_SHM_NAME = "pie_response_slots";
 #endif
-
-    // Control block for the response queue
-    struct alignas(64) ResponseQueueControl {
-        std::atomic<uint64_t> producer_idx{0}; // Written by C++ IPCWriter
-        std::atomic<uint64_t> consumer_idx{0}; // Written by Python's ResponseReader binding
-    };
 
 } // namespace pie_core::ipc

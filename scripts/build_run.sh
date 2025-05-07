@@ -10,7 +10,7 @@ trap on_exit EXIT
 # Configuration (override via environment variables if desired)
 ###############################################################################
 BUILD_DIR="${BUILD_DIR:-build}"
-BUILD_TYPE="${BUILD_TYPE:-RelWithDebInfo}"
+BUILD_TYPE="${BUILD_TYPE:-Debug}"
 MODEL_PATH="${MODEL_PATH:-.models/llama3-8b-instruct}"
 VENV_ACTIVATION_SCRIPT="${VENV_ACTIVATION_SCRIPT:-.venv/bin/activate}"
 

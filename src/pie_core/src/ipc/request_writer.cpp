@@ -94,8 +94,12 @@ namespace pie_core::ipc {
         spdlog::debug("RequestWriter: Mapped request SHM '{}' at address {:p}", request_shm_name_, request_shm_map_ptr_);
 
         // 3. Initialize Request Queue Control
+        // Control block is at the beginning of the shared memory
         request_queue_control_ = static_cast<RequestQueueControl*>(request_shm_map_ptr_);
+        // Slots start after the control block
         request_slots_ = reinterpret_cast<RequestSlot*>(static_cast<char*>(request_shm_map_ptr_) + sizeof(RequestQueueControl));
+        spdlog::debug("RequestWriter: Set up request_queue_control_ at {:p}, request_slots_ at {:p}",
+                     (void*)request_queue_control_, (void*)request_slots_);
 
         // 4. Initialize Bulk Data SHM (Open Existing)
         try {
