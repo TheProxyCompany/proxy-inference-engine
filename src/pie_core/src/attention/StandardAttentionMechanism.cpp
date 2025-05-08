@@ -3,8 +3,10 @@
 #include <mlx/fast.h>              // For scaled_dot_product_attention
 #include <mlx/ops.h>               // For triu, full
 #include <limits>                  // For infinity
+#include <cmath>                   // For sqrt
 #include <stdexcept>               // For runtime_error
 #include <spdlog/spdlog.h>         // For logging
+#include <spdlog/fmt/ranges.h>     // For formatting vectors like shape
 #include "attention/AttentionRegistry.hpp" // For auto-registration
 
 namespace pie_core::attention {
@@ -13,14 +15,16 @@ mx::array StandardAttentionMechanism::compute(
     const mx::array& queries,
     const mx::array& keys,
     const mx::array& values,
-    const engine::BatchDetails& details
+    const engine::BatchDetails& details [[maybe_unused]]
 ) const {
     spdlog::trace("StandardAttentionMechanism: Computing standard attention");
 
     // Input shapes are expected to be [B, H, L, D/H] after projections/RoPE in Attention layer
     if (queries.ndim() != 4 || keys.ndim() != 4 || values.ndim() != 4) {
          spdlog::error("StandardAttentionMechanism: Expected 4D input tensors [B, H, L, D/H], but got Q: {}, K: {}, V: {}",
-                       queries.shape(), keys.shape(), values.shape());
+                       fmt::format("{}", queries.shape()), // Format shape vector
+                       fmt::format("{}", keys.shape()),    // Format shape vector
+                       fmt::format("{}", values.shape())); // Format shape vector
          throw std::runtime_error("StandardAttentionMechanism requires 4D input tensors [B, H, L, D/H]");
     }
 
@@ -29,11 +33,11 @@ mx::array StandardAttentionMechanism::compute(
 
     // Create Causal Mask
     // This mask is applied *before* softmax inside scaled_dot_product_attention
-    std::optional<mx::array> attention_mask = std::nullopt;
+    std::vector<mx::array> attention_mask = {};
     if (L > 0) { // Only create mask if sequence length is positive
         mx::array mask = mx::triu(mx::full({L, L}, -std::numeric_limits<float>::infinity(), queries.dtype()), /*k=*/1);
         // The mask shape [L, L] should broadcast correctly to [B, H, L, L] within SDPA
-        attention_mask = mask;
+        attention_mask.push_back(mask);
         spdlog::trace("StandardAttentionMechanism: Created causal mask of shape [{}, {}]", L, L);
     } else {
          spdlog::warn("StandardAttentionMechanism: Sequence length L is 0, skipping mask creation.");
@@ -43,12 +47,17 @@ mx::array StandardAttentionMechanism::compute(
     // Perform scaled dot-product attention using MLX's optimized function
     // It handles: 1/sqrt(dk) scaling, mask application, softmax, matmul(scores, V)
     try {
+        // Calculate scale explicitly
+        float scale = 1.0f / std::sqrt(static_cast<float>(queries.shape(-1))); // queries shape is [B, H, L, D/H] -> D/H is shape(-1)
+
+        // Try passing "" for mask_mode, then scale, then mask
         mx::array attn_output = mx::fast::scaled_dot_product_attention(
             queries,
             keys,
             values,
-            /*scale=*/std::nullopt, // Uses default 1/sqrt(dk) scaling
-            attention_mask          // Pass the causal mask
+            scale, // Pass the calculated float scale
+            "", // mask_mode
+            attention_mask // Pass the optional mask last
         );
         spdlog::trace("StandardAttentionMechanism: mx::fast::scaled_dot_product_attention completed");
         return attn_output;

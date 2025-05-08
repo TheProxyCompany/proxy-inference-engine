@@ -1,15 +1,13 @@
 #pragma once
 
 #include "models/imodel.hpp"
+#include "engine/engine.hpp" // Include full definition
 #include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <stdexcept>
 #include <optional>
-
-// Forward declare EngineConfig
-namespace pie_core::engine { struct EngineConfig; }
 
 namespace pie_core::models {
 

@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <iostream> // Keep for potential debugging, but spdlog is better
 #include <spdlog/spdlog.h> // Use spdlog
+#include <spdlog/fmt/ranges.h> // For formatting vectors like shape
 
 namespace pie_core::layers {
 
@@ -48,7 +49,9 @@ mx::array Attention::forward(
     if (hidden_state.ndim() == 3) L = hidden_state.shape(1);
     else if (hidden_state.ndim() == 2 && B==1) L = hidden_state.shape(0);
     else { /* Need more robust L determination based on batch_details.input_lengths etc */
-        spdlog::warn("Attention::forward: Cannot reliably determine L from hidden_state shape {} and B={}. Reshape might fail.", hidden_state.shape(), B);
+        spdlog::warn("Attention::forward: Cannot reliably determine L from hidden_state shape {} and B={}. Reshape might fail.",
+                     fmt::format("{}", hidden_state.shape()), // Format shape vector
+                     B);
         // As a fallback, maybe use max(input_lengths) or total_tokens? Risky.
         // Let's assume L=1 for decode steps if shape is [TotalTokens, D] ? Needs refinement.
         if(hidden_state.ndim() == 2) L = 1; // Hacky assumption for decode

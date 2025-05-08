@@ -5,6 +5,7 @@
 #include <mlx/ops.h> // For triu, full
 #include <limits>   // For infinity
 #include <spdlog/spdlog.h>
+#include <spdlog/fmt/ranges.h> // For formatting vectors like shape
 #include <stdexcept>
 #include <optional> // For std::optional
 
@@ -65,7 +66,8 @@ namespace pie_core::models::llama3 {
             } else {
                 // If the shape isn't [B, L, D] or [L, D] for single seq, we can't easily make a standard causal mask.
                 spdlog::warn("LlamaModel::forward: Cannot create standard causal mask for hidden_state shape {}. "
-                             "Expected [B, L, D] or [L, D] for AttentionType::STANDARD.", hidden_state.shape());
+                             "Expected [B, L, D] or [L, D] for AttentionType::STANDARD.",
+                             fmt::format("{}", hidden_state.shape())); // Format shape vector
                 attention_mask = std::nullopt;
             }
         } else {
@@ -138,13 +140,8 @@ namespace pie_core::models::llama3 {
          }
     }
 
-    // Implementation of the static helper to apply engine config to llama config
-    void LlamaModel::apply_engine_config(LlamaConfig& config, const engine::EngineConfig& engine_config) {
-        spdlog::debug("LlamaModel: Applying EngineConfig.attention_type={} to LlamaConfig",
-                     static_cast<int>(engine_config.attention_type));
-        config.attention_type = engine_config.attention_type;
-        // Add other mappings from EngineConfig to LlamaConfig here if needed
-    }
+    // The apply_engine_config method has been removed as it's not needed here
+    // The lambda in the registry directly applies the configuration
 
     // --- Model Registry Integration ---
     namespace { // Use anonymous namespace
@@ -162,8 +159,8 @@ namespace pie_core::models::llama3 {
             // 2. Override config fields based on engine_config if provided
             if (engine_config) {
                 spdlog::debug("Llama Creator: Applying AttentionType ({}) from EngineConfig.",
-                              static_cast<int>(engine_config->attention_type));
-                llama_config.attention_type = engine_config->attention_type;
+                              static_cast<int>(engine_config.value().attention_type));
+                llama_config.attention_type = engine_config.value().attention_type;
                 // Add overrides for other relevant EngineConfig fields here if needed in the future
             } else {
                  spdlog::debug("Llama Creator: No EngineConfig provided, using default AttentionType from parsed config.");
