@@ -19,6 +19,12 @@ extern std::atomic<bool> g_shutdown_requested;
 namespace pie_core::engine {
 
     Engine::Engine(const std::string& model_path)
+        : Engine(model_path, EngineConfig{}) // Use default configuration
+    {
+    }
+
+    Engine::Engine(const std::string& model_path, const EngineConfig& config)
+        : config_(config)
     {
         // --- 1. Initialize Inter-Process Communication (IPC) ---
         try {
@@ -51,8 +57,13 @@ namespace pie_core::engine {
             throw; // Re-throw critical error
         }
 
-        // --- 4. Load Model ---
-        model_ = models::load_model(model_path);
+        // --- 4. Load Model with EngineConfig ---
+        spdlog::info("Engine: Loading model with attention type: {}",
+                    config_.attention_type == AttentionType::STANDARD ? "STANDARD" : "PAGED");
+
+        // Pass the entire EngineConfig to the model factory
+        model_ = models::load_model(model_path, config_);
+
         spdlog::info("Model loaded with {} layers, {} kv heads, {} head dim, {} vocab size",
             model_->get_num_layers(),
             model_->get_num_kv_heads(),
@@ -61,9 +72,9 @@ namespace pie_core::engine {
         );
 
         // --- 5. Initialize KV Cache Page Allocator ---
-        spdlog::info("Initializing paged KV cache allocator with {} pages", 8192);
+        spdlog::info("Initializing paged KV cache allocator with {} pages", config_.num_kv_cache_pages);
         allocator_ = std::make_unique<engine::PageAllocator>(
-            8192,
+            config_.num_kv_cache_pages,
             model_->get_num_kv_heads(),
             model_->get_head_dim()
         );
@@ -104,16 +115,24 @@ namespace pie_core::engine {
         spdlog::info("Engine: Response Postprocessor initialized.");
 
         // --- 10. Initialize Scheduler ---
-        spdlog::info("Engine: Initializing Scheduler...");
+        spdlog::info("Engine: Initializing Scheduler (max_seqs={}, max_tokens={}, attention_type={})...",
+                    config_.max_num_seqs,
+                    config_.max_tokens_in_batch,
+                    config_.attention_type == AttentionType::STANDARD ? "STANDARD" : "PAGED");
+
         scheduler_ = std::make_unique<engine::Scheduler>(
             *allocator_,
             *model_,
             processed_sequence_queue_,
             postprocessing_queue_,
             *response_writer_,
-            /* max_num_seqs= */ 256,
-            /* max_tokens_in_batch= */ 4096
+            config_.max_num_seqs,
+            config_.max_tokens_in_batch
         );
+
+        // Store the attention type from config for scheduler to use
+        scheduler_->set_attention_type(config_.attention_type);
+
         spdlog::info("Engine: Scheduler initialized.");
 
         // Done initializing all components

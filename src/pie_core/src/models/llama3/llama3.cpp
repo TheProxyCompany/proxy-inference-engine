@@ -1,7 +1,12 @@
 #include "models/llama3/llama3.hpp"
 #include "engine/batch_details.hpp"
 #include "models/model_registry.hpp"
+#include "engine/engine.hpp" // For EngineConfig
+#include <mlx/ops.h> // For triu, full
+#include <limits>   // For infinity
+#include <spdlog/spdlog.h>
 #include <stdexcept>
+#include <optional> // For std::optional
 
 namespace pie_core::models::llama3 {
 
@@ -10,6 +15,8 @@ namespace pie_core::models::llama3 {
           embed_tokens_(config.vocab_size, config.hidden_size),
           norm_(config.hidden_size, config.rms_norm_eps)
     {
+        spdlog::info("LlamaModel: Constructing with AttentionType: {}",
+                    static_cast<int>(config.attention_type));
         layers_.reserve(config.num_hidden_layers);
         for (int i = 0; i < config.num_hidden_layers; ++i) {
             layers::RoPEConfig rope_config = config.get_rope_config();
@@ -18,7 +25,8 @@ namespace pie_core::models::llama3 {
                 .num_heads = config.num_attention_heads,
                 .num_kv_heads = config.num_key_value_heads,
                 .rope_config = rope_config,
-                .bias = config.attention_bias
+                .bias = config.attention_bias,
+                .attention_type = config.attention_type // Pass the attention type from LlamaConfig
             };
             layers::TransformerBlockConfig block_config = {
                 .hidden_dims = config.hidden_size,
@@ -38,15 +46,42 @@ namespace pie_core::models::llama3 {
         // 1. Get embeddings from token IDs in batch_details
         mx::array hidden_state = embed_tokens_.forward(batch_details.token_ids);
 
-        // 2. Pass through Transformer blocks
+        std::optional<mx::array> attention_mask = std::nullopt;
+
+        // 2. Create Causal Mask if using standard attention
+        if (batch_details.attention_type == engine::AttentionType::STANDARD) {
+            // This mask creation assumes hidden_state is [B, L, D].
+            if (hidden_state.ndim() == 3) {
+                int L = hidden_state.shape(1); // Sequence length
+                mx::array mask = mx::triu(mx::full({L, L}, -std::numeric_limits<float>::infinity(), hidden_state.dtype()), /*k=*/1);
+                attention_mask = mask;
+                spdlog::trace("LlamaModel::forward: Created causal mask for standard attention (L={})", L);
+            } else if (hidden_state.ndim() == 2 && batch_details.sequence_ids.size() == 1) {
+                // Handle flattened input for a single sequence batch [TotalTokens, D]
+                int L = hidden_state.shape(0);
+                mx::array mask = mx::triu(mx::full({L, L}, -std::numeric_limits<float>::infinity(), hidden_state.dtype()), /*k=*/1);
+                attention_mask = mask;
+                spdlog::trace("LlamaModel::forward: Created causal mask for standard attention (single sequence, L={})", L);
+            } else {
+                // If the shape isn't [B, L, D] or [L, D] for single seq, we can't easily make a standard causal mask.
+                spdlog::warn("LlamaModel::forward: Cannot create standard causal mask for hidden_state shape {}. "
+                             "Expected [B, L, D] or [L, D] for AttentionType::STANDARD.", hidden_state.shape());
+                attention_mask = std::nullopt;
+            }
+        } else {
+            spdlog::trace("LlamaModel::forward: Skipping mask creation for paged attention.");
+            // For PAGED attention, masking is handled internally by the kernel based on context lengths.
+        }
+
+        // 3. Pass through Transformer blocks
         for (const auto& layer : layers_) {
             hidden_state = layer.forward(hidden_state, batch_details);
         }
 
-        // 3. Final normalization
+        // 4. Final normalization
         hidden_state = norm_.forward(hidden_state);
 
-        // 4. Language model head projection
+        // 5. Language model head projection
         if (lm_head_.has_value()) {
             return lm_head_->forward(hidden_state);
         } else {
@@ -103,18 +138,52 @@ namespace pie_core::models::llama3 {
          }
     }
 
-    namespace {
-        std::unique_ptr<IModel> create_llama_model(const std::string& model_path) {
-            LlamaConfig config = parse_llama_config(model_path);
-            return std::make_unique<LlamaModel>(config);
+    // Implementation of the static helper to apply engine config to llama config
+    void LlamaModel::apply_engine_config(LlamaConfig& config, const engine::EngineConfig& engine_config) {
+        spdlog::debug("LlamaModel: Applying EngineConfig.attention_type={} to LlamaConfig",
+                     static_cast<int>(engine_config.attention_type));
+        config.attention_type = engine_config.attention_type;
+        // Add other mappings from EngineConfig to LlamaConfig here if needed
+    }
+
+    // --- Model Registry Integration ---
+    namespace { // Use anonymous namespace
+
+        // The lambda passed to the registrar now matches the updated ModelCreatorFunc signature
+        std::unique_ptr<IModel> create_llama_model_registered(
+            const std::string& model_path,
+            const std::optional<engine::EngineConfig>& engine_config // Receive optional config
+        ) {
+            // 1. Parse the configuration from the model directory
+            LlamaConfig llama_config = parse_llama_config(model_path);
+            spdlog::debug("Llama Creator: Parsed base config for '{}'. Default AttentionType: {}",
+                          model_path, static_cast<int>(llama_config.attention_type));
+
+            // 2. Override config fields based on engine_config if provided
+            if (engine_config) {
+                spdlog::debug("Llama Creator: Applying AttentionType ({}) from EngineConfig.",
+                              static_cast<int>(engine_config->attention_type));
+                llama_config.attention_type = engine_config->attention_type;
+                // Add overrides for other relevant EngineConfig fields here if needed in the future
+            } else {
+                 spdlog::debug("Llama Creator: No EngineConfig provided, using default AttentionType from parsed config.");
+            }
+
+            // 3. Construct the LlamaModel with the finalized configuration
+            spdlog::info("Llama Creator: Constructing LlamaModel with final AttentionType: {}",
+                         static_cast<int>(llama_config.attention_type));
+            return std::make_unique<LlamaModel>(llama_config);
         }
 
         struct LlamaRegistrar {
             LlamaRegistrar() {
-                ModelRegistry::register_model("llama", create_llama_model);
+                // Register the updated creator function
+                ModelRegistry::register_model("llama", create_llama_model_registered);
+                spdlog::debug("LlamaModel registered with ModelRegistry.");
             }
         };
-        static LlamaRegistrar registrar_instance;
-    }
+        static LlamaRegistrar registrar_instance; // Static instance ensures registration
+
+    } // anonymous namespace
 
 } // namespace pie_core::models::llama3

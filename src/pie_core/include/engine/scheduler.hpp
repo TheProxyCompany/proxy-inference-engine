@@ -60,6 +60,12 @@ namespace pie_core::engine {
          */
         void stop();
 
+        /**
+         * @brief Sets the attention type to use for all batches
+         * @param type The attention type (STANDARD or PAGED)
+         */
+        void set_attention_type(AttentionType type);
+
 
         // --- Prevent Copying/Moving ---
         Scheduler(const Scheduler&) = delete;
@@ -78,6 +84,7 @@ namespace pie_core::engine {
         // --- Configuration ---
         const size_t max_num_seqs_;
         const size_t max_tokens_in_batch_;
+        AttentionType attention_type_ = AttentionType::STANDARD;
 
         // --- Internal State ---
         std::list<std::unique_ptr<sequence::Sequence>> waiting_sequences_;

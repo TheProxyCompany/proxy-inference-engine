@@ -7,6 +7,14 @@ namespace mx = mlx::core;
 
 namespace pie_core::engine {
 
+    /**
+     * @brief Enum to specify which attention implementation to use
+     */
+    enum class AttentionType {
+        STANDARD, // Use standard MLX scaled_dot_product_attention
+        PAGED     // Use custom paged attention kernel
+    };
+
     struct BatchDetails {
 
         BatchDetails()
@@ -18,7 +26,8 @@ namespace pie_core::engine {
               consolidated_block_table(mx::array({})),
               num_prefill_sequences(0),
               num_decode_sequences(0),
-              total_tokens_in_step(0)
+              total_tokens_in_step(0),
+              attention_type(AttentionType::STANDARD) // Default to standard for baseline testing
         {}
 
         /**
@@ -89,5 +98,10 @@ namespace pie_core::engine {
          * Should equal `token_ids.shape[0]` and `sum(input_lengths)`.
          */
         size_t total_tokens_in_step = 0;
+
+        /**
+         * @brief The type of attention mechanism to use for this batch
+         */
+        AttentionType attention_type = AttentionType::STANDARD;
     };
 } // namespace pie_core::engine

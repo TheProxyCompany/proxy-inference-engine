@@ -69,6 +69,12 @@ namespace pie_core::engine {
         }
     }
 
+    void Scheduler::set_attention_type(AttentionType type) {
+        attention_type_ = type;
+        spdlog::info("Scheduler: Attention type set to {}",
+                   type == AttentionType::STANDARD ? "STANDARD" : "PAGED");
+    }
+
     void Scheduler::run_loop() {
         spdlog::info("Scheduler: Run loop entered");
 
@@ -352,6 +358,12 @@ namespace pie_core::engine {
         BatchDetails details;
         details.num_prefill_sequences = prefill_seq_ids.size();
         details.num_decode_sequences = decode_seq_ids.size();
+
+        // Set the attention type from scheduler configuration
+        details.attention_type = attention_type_;
+
+        spdlog::debug("Scheduler: Using attention_type={} for batch",
+                    details.attention_type == AttentionType::STANDARD ? "STANDARD" : "PAGED");
 
         std::vector<mx::array> batch_token_ids;
         std::vector<mx::array> batch_positions;

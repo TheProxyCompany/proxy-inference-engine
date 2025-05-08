@@ -30,8 +30,18 @@ template <> struct fmt::formatter<mlx::core::Dtype> {
 
 namespace pie_core::models {
 
+    // Original function implementation delegates to the newer implementation
     std::unique_ptr<IModel> load_model(const std::string& model_path) {
-        spdlog::info("ModelFactory: Loading model from '{}'", model_path);
+        return load_model(model_path, std::nullopt);
+    }
+
+    // Implementation with optional EngineConfig
+    std::unique_ptr<IModel> load_model(
+        const std::string& model_path,
+        const std::optional<engine::EngineConfig>& engine_config
+    ) {
+        spdlog::info("ModelFactory: Loading model from '{}' (EngineConfig provided: {})",
+                    model_path, engine_config.has_value());
         auto start_time = std::chrono::steady_clock::now();
 
         // Verify model directory exists
@@ -94,11 +104,12 @@ namespace pie_core::models {
             throw ModelLoadError("An unexpected error occurred during weight loading: " + std::string(e.what()));
         }
 
-        // 3. Create model instance using the registry
+        // 3. Create model instance using the registry with optional EngineConfig
         spdlog::info("ModelFactory: Creating model instance of type '{}'", base_config.model_type);
         std::unique_ptr<IModel> model = nullptr;
         try {
-            model = ModelRegistry::create_model(base_config.model_type, model_path);
+            // Pass the engine_config to the registry
+            model = ModelRegistry::create_model(base_config.model_type, model_path, engine_config);
             spdlog::debug("ModelFactory: Successfully created model instance of type '{}'", base_config.model_type);
         } catch (const std::runtime_error& e) {
             spdlog::critical("ModelFactory: Failed to create model instance of type '{}': {}",
@@ -128,13 +139,20 @@ namespace pie_core::models {
         auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - start_time).count();
 
-        // Log model parameters
-        spdlog::info("ModelFactory: Model loaded successfully in {}ms - {} layers, {} KV heads, {} head dim, {} vocab size",
+        // Log model parameters with attention type if available
+        std::string attention_type_str = "";
+        if (engine_config) {
+            attention_type_str = fmt::format(", attention_type={}",
+                engine_config->attention_type == engine::AttentionType::STANDARD ? "STANDARD" : "PAGED");
+        }
+
+        spdlog::info("ModelFactory: Model loaded successfully in {}ms - {} layers, {} KV heads, {} head dim, {} vocab size{}",
                     total_duration,
                     model->get_num_layers(),
                     model->get_num_kv_heads(),
                     model->get_head_dim(),
-                    model->get_vocab_size());
+                    model->get_vocab_size(),
+                    attention_type_str);
 
         return model;
     }

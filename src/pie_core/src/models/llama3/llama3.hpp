@@ -26,6 +26,9 @@ namespace pie_core::models::llama3 {
         std::vector<mx::array*> get_parameters() override;
         void load_weights(const std::unordered_map<std::string, mx::array>& weights) override;
 
+        // Static helper to apply engine config to llama config
+        static void apply_engine_config(LlamaConfig& config, const engine::EngineConfig& engine_config);
+
     private:
         LlamaConfig config_;
         layers::Embedding embed_tokens_;

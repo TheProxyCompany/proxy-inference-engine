@@ -2,10 +2,13 @@
 
 #include "layers/rope.hpp"
 #include "models/model_config.hpp"
+#include "engine/batch_details.hpp" // For AttentionType
 #include <string>
 #include <optional>
 
 namespace pie_core::models::llama3 {
+
+namespace engine = pie_core::engine; // Alias for engine namespace
 
     /**
      * @brief Configuration specific to the RoPE variant used in Llama 3.
@@ -40,6 +43,7 @@ namespace pie_core::models::llama3 {
         bool attention_bias = false;
         bool mlp_bias = false;
         bool tie_word_embeddings = false;
+        engine::AttentionType attention_type = engine::AttentionType::STANDARD; // Default to standard attention
 
         Llama3RopeConfig get_rope_config() const {
             return rope_scaling.value_or(Llama3RopeConfig{

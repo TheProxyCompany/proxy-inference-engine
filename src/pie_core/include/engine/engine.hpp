@@ -4,6 +4,7 @@
 #include "engine/response_postprocessor.hpp"
 #include "engine/page_allocator.hpp"
 #include "engine/scheduler.hpp"
+#include "engine/batch_details.hpp"
 #include "ipc/request_reader.hpp"
 #include "ipc/response_writer.hpp"
 #include "ipc/request_writer.hpp"
@@ -14,9 +15,35 @@
 
 namespace pie_core::engine {
 
+    /**
+     * @brief Configuration struct for Engine parameters
+     */
+    struct EngineConfig {
+        // KV Cache configuration
+        size_t num_kv_cache_pages = 8192;
+
+        // Scheduler configuration
+        size_t max_num_seqs = 256;
+        size_t max_tokens_in_batch = 4096;
+
+        // Attention mechanism configuration
+        AttentionType attention_type = AttentionType::STANDARD;
+    };
+
     class Engine {
     public:
+        /**
+         * @brief Constructs the Engine with default configuration
+         * @param model_path Path to the model directory
+         */
         Engine(const std::string& model_path);
+
+        /**
+         * @brief Constructs the Engine with custom configuration
+         * @param model_path Path to the model directory
+         * @param config Custom engine configuration
+         */
+        Engine(const std::string& model_path, const EngineConfig& config);
         ~Engine();
 
         /**
@@ -36,6 +63,7 @@ namespace pie_core::engine {
         std::thread postprocessor_t_;
 
         std::atomic<bool> stop_flag_{false};
+        EngineConfig config_; // Engine configuration
 
         std::unique_ptr<tokenizers::Tokenizer> tokenizer_;
         std::unique_ptr<models::IModel> model_;
