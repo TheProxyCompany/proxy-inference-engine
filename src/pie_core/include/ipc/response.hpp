@@ -15,6 +15,7 @@ namespace pie_core::ipc {
 
     constexpr size_t MAX_TOKENS_PER_DELTA = 4;
     constexpr size_t MAX_LOGPROBS_PER_TOKEN = 20;
+    constexpr size_t MAX_CONTENT_BYTES = 128;
 
     enum class ResponseSlotState : uint32_t {
         FREE_FOR_CPP_WRITER = 0, // Slot is available for C++ IPCWriter
@@ -31,6 +32,8 @@ namespace pie_core::ipc {
         float logprobs[MAX_TOKENS_PER_DELTA][MAX_LOGPROBS_PER_TOKEN]{0.0f}; // Batched logprobs
         bool is_final_delta{false};
         sequence::FinishReason finish_reason;
+        char content[MAX_CONTENT_BYTES]{0}; // Decoded token content as UTF-8 string
+        uint32_t content_len{0};            // Length of content string (excluding null terminator)
     };
 
     // --- Response Queue ---

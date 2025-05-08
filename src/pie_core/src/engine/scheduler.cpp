@@ -13,12 +13,14 @@ namespace pie_core::engine {
         PageAllocator& allocator,
         models::IModel& model,
         RequestPreprocessor::ProcessedSequenceQueue& processed_queue,
+        PostprocessingQueue& postprocessing_queue,
         ipc::ResponseWriter& response_writer,
         size_t max_num_seqs,
         size_t max_tokens_in_batch
     ) : allocator_(allocator),
         model_(model),
         incoming_sequence_queue_(processed_queue),
+        postprocessing_queue_(postprocessing_queue),
         response_writer_(response_writer),
         max_num_seqs_(max_num_seqs),
         max_tokens_in_batch_(max_tokens_in_batch),
@@ -134,30 +136,44 @@ namespace pie_core::engine {
                 // Track token generation
                 tokens_generated += 1; // We're generating one token in this mock implementation
 
-                // Create mock response
-                ipc::ResponseDeltaSlot delta;
-                delta.request_id = seq_id;
-                delta.num_tokens_in_delta = 1;
-                delta.tokens[0] = 64000; // Example token ID
-                // Add dummy logprobs if needed for testing Python side
-                delta.logprobs[0][0] = -0.1f;
-                delta.is_final_delta = true; // Send just one final delta
-                delta.finish_reason = sequence::FinishReason::STOP;
+                // Create mock postprocessing data
+                std::unique_ptr<PostprocessingData> pp_data = std::make_unique<PostprocessingData>();
+                pp_data->request_id = seq_id;
+                pp_data->next_token_id = 64000; // Example token ID
+                pp_data->is_final_delta = true; // Send just one final delta
+                pp_data->finish_reason = sequence::FinishReason::STOP;
 
-                // Send mock response
+                // Send to postprocessing queue
                 try {
-                    spdlog::debug("Scheduler: Sending response delta with {} tokens for sequence_id={}",
-                                delta.num_tokens_in_delta, seq_id);
-                    response_writer_.write_delta(delta);
+                    spdlog::debug("Scheduler: Sending token to postprocessor for sequence_id={}", seq_id);
+                    if (postprocessing_queue_.push(std::move(pp_data))) {
+                        auto processing_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start_processing).count();
 
-                    auto processing_time = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - start_processing).count();
+                        spdlog::info("Scheduler: Successfully queued token for postprocessing for sequence_id={} in {}ms",
+                                   seq_id, processing_time);
+                    } else {
+                        spdlog::error("Scheduler: Failed to queue token for postprocessing for sequence_id={} (queue full)",
+                                    seq_id);
 
-                    spdlog::info("Scheduler: Successfully sent final response for sequence_id={} in {}ms",
-                               seq_id, processing_time);
-                } catch (const ipc::ResponseWriterError& e) {
-                    spdlog::error("Scheduler: Failed to write response delta for sequence_id={}: {}",
-                                seq_id, e.what());
+                        // Fallback to direct response writing
+                        ipc::ResponseDeltaSlot delta;
+                        delta.request_id = seq_id;
+                        delta.num_tokens_in_delta = 1;
+                        delta.tokens[0] = 64000; // Example token ID
+                        delta.logprobs[0][0] = -0.1f;
+                        delta.is_final_delta = true;
+                        delta.finish_reason = sequence::FinishReason::STOP;
+                        std::string fallback_content = "Hello, world!";
+                        std::memcpy(delta.content, fallback_content.c_str(), fallback_content.size());
+                        delta.content[fallback_content.size()] = '\0';
+                        delta.content_len = fallback_content.size();
+
+                        spdlog::warn("Scheduler: Fallback - Direct response writing for sequence_id={}", seq_id);
+                        response_writer_.write_delta(delta);
+                    }
+                } catch (const std::exception& e) {
+                    spdlog::error("Scheduler: Error processing sequence_id={}: {}", seq_id, e.what());
                 }
             } else {
                 // No sequences waiting/running, sleep briefly
@@ -539,30 +555,44 @@ namespace pie_core::engine {
                  // TODO: Check for other stop reasons (user sequence, tool use signal)
             }
 
-            // 6. Send Delta via IPC
-            ipc::ResponseDeltaSlot delta;
-            delta.request_id = seq.sequence_id; // Use sequence_id as request_id correlation
-            delta.num_tokens_in_delta = 1;
-            delta.tokens[0] = next_token_id;
+            // 6. Send token to postprocessor
+            std::unique_ptr<PostprocessingData> pp_data = std::make_unique<PostprocessingData>();
+            pp_data->request_id = seq.sequence_id;
+            pp_data->next_token_id = next_token_id;
+            pp_data->is_final_delta = finished;
+            pp_data->finish_reason = reason;
 
             // TODO: Populate logprobs if requested
+            // pp_data->top_logprobs = ...
 
-            delta.is_final_delta = finished;
-            delta.finish_reason = reason;
-
-            spdlog::debug("Scheduler: Sending response delta for sequence_id={}, token_id={}, is_final={}",
+            spdlog::debug("Scheduler: Sending token to postprocessor for sequence_id={}, token_id={}, is_final={}",
                          seq_id, next_token_id, finished);
 
-            try {
-                response_writer_.write_delta(delta);
-                spdlog::debug("Scheduler: Successfully sent response delta for sequence_id={}", seq_id);
+            if (postprocessing_queue_.push(std::move(pp_data))) {
+                spdlog::debug("Scheduler: Successfully sent token to postprocessor for sequence_id={}", seq_id);
                 successful_sequences++;
-            } catch (const ipc::ResponseWriterError& e) {
-                spdlog::error("Scheduler: Failed to write response delta for sequence_id={}: {}",
-                             seq_id, e.what());
+            } else {
+                spdlog::error("Scheduler: Failed to send token to postprocessor for sequence_id={} (queue full)",
+                             seq_id);
                 // Mark sequence as errored
                 seq.status = sequence::SequenceStatus::ERROR;
                 finished = true; // Mark as finished to trigger cleanup
+
+                // Fallback to direct response writing
+                try {
+                    ipc::ResponseDeltaSlot delta;
+                    delta.request_id = seq.sequence_id;
+                    delta.num_tokens_in_delta = 1;
+                    delta.tokens[0] = next_token_id;
+                    delta.is_final_delta = finished;
+                    delta.finish_reason = reason;
+
+                    spdlog::warn("Scheduler: Fallback - Direct response writing for sequence_id={}", seq_id);
+                    response_writer_.write_delta(delta);
+                } catch (const ipc::ResponseWriterError& e) {
+                    spdlog::error("Scheduler: Fallback failed - Could not write response for sequence_id={}: {}",
+                                 seq_id, e.what());
+                }
             }
 
             // 7. Update sequence status if finished

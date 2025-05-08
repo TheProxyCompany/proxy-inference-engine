@@ -160,6 +160,9 @@ NB_MODULE(pie_core, m) {
                     py_delta["is_final_delta"] = result_delta.is_final_delta;
                     py_delta["finish_reason"] = nb::cast(result_delta.finish_reason);
 
+                    // Copy content string from fixed-size buffer
+                    py_delta["content"] = std::string(result_delta.content, result_delta.content_len);
+
                     // Convert token array to vector
                     std::vector<int32_t> tokens_vec(
                         result_delta.tokens,

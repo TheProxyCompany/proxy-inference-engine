@@ -2,6 +2,7 @@
 
 #include "engine/page_allocator.hpp"
 #include "engine/request_preprocessor.hpp"
+#include "engine/response_postprocessor.hpp" // Include for PostprocessingQueue
 #include "ipc/response_writer.hpp"
 #include "models/imodel.hpp"
 #include "sequence/sequence.hpp"
@@ -29,6 +30,7 @@ namespace pie_core::engine {
          * @param allocator Reference to the PageAllocator for KV cache management.
          * @param model Reference to the loaded model object.
          * @param processed_queue Reference to the queue providing new sequences.
+         * @param postprocessing_queue Reference to the queue for sending tokens to the postprocessor.
          * @param response_writer Reference to the writer for sending results back via IPC.
          * @param max_num_seqs Max concurrent sequences the scheduler will manage.
          * @param max_tokens_in_batch Max total tokens per GPU batch.
@@ -37,6 +39,7 @@ namespace pie_core::engine {
             PageAllocator& allocator,
             models::IModel& model,
             RequestPreprocessor::ProcessedSequenceQueue& processed_queue,
+            PostprocessingQueue& postprocessing_queue,
             ipc::ResponseWriter& response_writer,
             size_t max_num_seqs = 256,
             size_t max_tokens_in_batch = 4096
@@ -69,6 +72,7 @@ namespace pie_core::engine {
         PageAllocator& allocator_;
         models::IModel& model_;
         RequestPreprocessor::ProcessedSequenceQueue& incoming_sequence_queue_;
+        PostprocessingQueue& postprocessing_queue_;
         ipc::ResponseWriter& response_writer_;
 
         // --- Configuration ---

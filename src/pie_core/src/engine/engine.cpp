@@ -41,7 +41,17 @@ namespace pie_core::engine {
         );
         spdlog::info("Bulk data shared memory manager initialized");
 
-        // --- 3. Load Model ---
+        // --- 3. Initialize centralized tokenizer (needed by multiple components) ---
+        spdlog::info("Engine: Initializing Tokenizer from {}", model_path);
+        try {
+            tokenizer_ = std::make_unique<tokenizers::Tokenizer>(model_path);
+            spdlog::info("Engine: Tokenizer initialized.");
+        } catch (const tokenizers::TokenizerException& e) {
+            spdlog::critical("Engine: Failed to initialize Tokenizer: {}", e.what());
+            throw; // Re-throw critical error
+        }
+
+        // --- 4. Load Model ---
         model_ = models::load_model(model_path);
         spdlog::info("Model loaded with {} layers, {} kv heads, {} head dim, {} vocab size",
             model_->get_num_layers(),
@@ -50,7 +60,7 @@ namespace pie_core::engine {
             model_->get_vocab_size()
         );
 
-        // --- 4. Initialize KV Cache Page Allocator ---
+        // --- 5. Initialize KV Cache Page Allocator ---
         spdlog::info("Initializing paged KV cache allocator with {} pages", 8192);
         allocator_ = std::make_unique<engine::PageAllocator>(
             8192,
@@ -59,7 +69,7 @@ namespace pie_core::engine {
         );
         spdlog::info("KV cache allocator initialized");
 
-        // --- 5. Initialize Request Reader ---
+        // --- 6. Initialize Request Reader ---
         spdlog::info("Engine: Initializing Request Reader...");
         request_reader_ = std::make_unique<ipc::RequestReader>(
             raw_request_queue_,
@@ -69,7 +79,12 @@ namespace pie_core::engine {
         );
         spdlog::info("Engine: Request Reader initialized.");
 
-        // --- 6. Initialize Request Preprocessor ---
+        // --- 7. Initialize Response Writer ---
+        spdlog::info("Engine: Initializing Response Writer...");
+        response_writer_ = std::make_unique<ipc::ResponseWriter>(ipc::RESPONSE_QUEUE_SHM_NAME);
+        spdlog::info("Engine: Response Writer initialized.");
+
+        // --- 8. Initialize Request Preprocessor (using centralized tokenizer) ---
         spdlog::info("Engine: Initializing Request Preprocessor...");
         preprocessor_ = std::make_unique<engine::RequestPreprocessor>(
             raw_request_queue_,
@@ -79,17 +94,22 @@ namespace pie_core::engine {
         );
         spdlog::info("Engine: Request Preprocessor initialized.");
 
-        // --- 7. Initialize Response Writer ---
-        spdlog::info("Engine: Initializing Response Writer...");
-        response_writer_ = std::make_unique<ipc::ResponseWriter>(ipc::RESPONSE_QUEUE_SHM_NAME);
-        spdlog::info("Engine: Response Writer initialized.");
+        // --- 9. Initialize Response Postprocessor ---
+        spdlog::info("Engine: Initializing Response Postprocessor...");
+        postprocessor_ = std::make_unique<engine::ResponsePostprocessor>(
+            postprocessing_queue_,
+            *response_writer_,
+            *tokenizer_
+        );
+        spdlog::info("Engine: Response Postprocessor initialized.");
 
-        // --- 8. Initialize Scheduler ---
+        // --- 10. Initialize Scheduler ---
         spdlog::info("Engine: Initializing Scheduler...");
         scheduler_ = std::make_unique<engine::Scheduler>(
             *allocator_,
-            *model_, // Pass by reference, not move the unique_ptr
+            *model_,
             processed_sequence_queue_,
+            postprocessing_queue_,
             *response_writer_,
             /* max_num_seqs= */ 256,
             /* max_tokens_in_batch= */ 4096
@@ -109,7 +129,7 @@ namespace pie_core::engine {
 
     void Engine::run_blocking() {
         spdlog::info("Engine: Starting component threads...");
-        if (!request_reader_ || !preprocessor_ || !scheduler_) {
+        if (!request_reader_ || !preprocessor_ || !scheduler_ || !postprocessor_) {
             throw std::runtime_error("Engine cannot run: Components not initialized.");
         }
 
@@ -117,6 +137,7 @@ namespace pie_core::engine {
         reader_t_ = std::thread([this] { request_reader_->run_loop(); });
         preprocessor_t_ = std::thread([this] { preprocessor_->run_loop(); });
         scheduler_t_ = std::thread([this] { scheduler_->run_loop(); });
+        postprocessor_t_ = std::thread([this] { postprocessor_->run_loop(); });
         spdlog::info("Engine: Component threads started.");
 
         spdlog::info("Engine: Running... (Waiting for shutdown signal via atomic flag)");
@@ -142,15 +163,20 @@ namespace pie_core::engine {
         if (request_reader_) request_reader_->stop();
         if (preprocessor_) preprocessor_->stop();
         if (scheduler_) scheduler_->stop();
+        if (postprocessor_) postprocessor_->stop();
 
         // Wake up the reader thread if it's blocked in kevent/eventfd_read
         if (ipc_manager_) ipc_manager_->trigger_kernel_event();
 
         spdlog::info("Engine: Joining component threads...");
-        // Join threads
+        // Join threads - ordered for clean shutdown (scheduler should finish first to stop token generation)
         if (scheduler_t_.joinable()) {
             scheduler_t_.join();
             spdlog::debug("Engine: Scheduler thread joined.");
+        }
+        if (postprocessor_t_.joinable()) {
+            postprocessor_t_.join();
+            spdlog::debug("Engine: Postprocessor thread joined.");
         }
         if (preprocessor_t_.joinable()) {
             preprocessor_t_.join();
