@@ -116,6 +116,28 @@ else()
     endif()
 endif()
 
+# --- Find or Fetch FMT ---
+find_package(fmt QUIET)
+if(NOT fmt_FOUND)
+    message(STATUS "fmt not found via find_package. Attempting FetchContent.")
+    include(FetchContent)
+    FetchContent_Declare(
+        fmt
+        GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+        GIT_TAG "11.2.0"
+    )
+    FetchContent_MakeAvailable(fmt)
+    message(STATUS "Fetched fmt. Target fmt::fmt-header-only should be available.")
+else()
+    message(STATUS "Found fmt via find_package. Version: ${fmt_VERSION}")
+endif()
+
+# --- Find MLX ---
+execute_process(
+  COMMAND "${Python_EXECUTABLE}" -m mlx --cmake-dir
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  OUTPUT_VARIABLE MLX_ROOT)
+message(STATUS "PIE: Using MLX CMake directory from Python env: ${MLX_ROOT}")
 find_package(MLX CONFIG REQUIRED)
 
 # --- Global Include Directories ---
@@ -183,6 +205,8 @@ nanobind_add_module(
 
 target_link_libraries(
     ${EXTENSION_NAME}
+    PUBLIC
+        mlx
     PRIVATE
         ${CORE_LIB_NAME}
 )
