@@ -1,5 +1,5 @@
 [build-system]
-requires = ["py-build-cmake", "nanobind"]
+requires = ["py-build-cmake", "nanobind==2.5.0"]
 build-backend = "py_build_cmake.build"
 
 [project]
@@ -34,7 +34,8 @@ dependencies = [
     "huggingface-hub",
     "fastapi[standard]",
     "pydantic-settings",
-    "py-build-cmake"
+    "py-build-cmake",
+    "nanobind==2.5.0",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +49,7 @@ dev = [
     "ruff",
     "pre-commit",
     "psutil"
+
 ]
 
 [project.urls]

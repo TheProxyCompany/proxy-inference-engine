@@ -63,11 +63,19 @@ set(Python_VIRTUALENV FIRST)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 message(STATUS "Using Python site-packages (Python_SITELIB): ${Python_SITELIB}")
 
+# --- Find nanobind ---
+execute_process(
+  COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  OUTPUT_VARIABLE nanobind_ROOT)
+message(STATUS "Nanobind CMake directory: ${nanobind_ROOT}")
+find_package(nanobind CONFIG REQUIRED)
+
 # --- Find External Dependencies ---
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/mlx EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers EXCLUDE_FROM_ALL)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/proxy-attention-lab EXCLUDE_FROM_ALL)
 
 find_package(nlohmann_json 3.12.0 REQUIRED)
 find_package(Boost)
@@ -117,17 +125,29 @@ include_directories(
     SYSTEM
     ${pse_core_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/nanobind/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/mlx/mlx
     ${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/proxy-attention-lab
 )
+
+if(TARGET pal_core_lib_metallib) # Check if PAL's metallib target exists
+    # This gets the location of the built .metallib file from PAL's build directory
+    get_target_property(PAL_METALLIB_LOCATION pal_core_lib_metallib LOCATION)
+
+    install(
+        FILES "${PAL_METALLIB_LOCATION}"
+        DESTINATION bin
+        RENAME "pal_core_lib.metallib"
+        COMPONENT engine_resources
+    )
+endif()
 
 # --- Source Files, Module Definition, Target Properties ---
 file(GLOB_RECURSE PIE_CORE_LIB_SRC CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ipc/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/layers/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/attention/*.cpp" # ADD THIS LINE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/attention/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/logits_processors/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/models/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/models/**/*.cpp"
@@ -167,21 +187,7 @@ target_link_options(${CORE_LIB_NAME} PRIVATE
     $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
 )
 
-# --- Build Metal Library ---
-if(MLX_BUILD_METAL)
-    message(STATUS "Configuring Metal library build for pie_core")
-    mlx_build_metallib(
-        TARGET pie_core_metallib
-        TITLE ${EXTENSION_NAME}
-        SOURCES
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/kernels/paged_attention.metal
-        INCLUDE_DIRS
-             ${CMAKE_CURRENT_SOURCE_DIR}/include
-             ${MLX_INCLUDE_DIRS}
-        OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    )
-    add_dependencies(${CORE_LIB_NAME} pie_core_metallib)
-endif()
+target_link_libraries(${CORE_LIB_NAME} PRIVATE pal_core_lib)
 
 nanobind_add_module(
     ${EXTENSION_NAME}
@@ -221,6 +227,7 @@ if(APPLE)
         tokenizers_cpp
         nlohmann_json::nlohmann_json
         spdlog::spdlog_header_only
+        pal_core_lib
     )
 else()
     target_link_libraries(${ENGINE_EXE_NAME} PRIVATE
@@ -230,6 +237,7 @@ else()
         tokenizers_cpp
         nlohmann_json::nlohmann_json
         spdlog::spdlog_header_only
+        pal_core_lib
     )
 endif()
 

@@ -10,3 +10,6 @@
 [submodule "src/pie_core/external/tokenizers"]
 	path = src/pie_core/external/tokenizers
 	url = https://github.com/TheProxyCompany/tokenizers-cpp.git
+[submodule "src/pie_core/external/proxy-attention-lab"]
+	path = src/pie_core/external/proxy-attention-lab
+	url = https://github.com/TheProxyCompany/proxy-attention-lab.git
