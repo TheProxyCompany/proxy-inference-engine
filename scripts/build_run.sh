@@ -46,9 +46,6 @@ build_project() {
   log "Removing old build directory"
   rm -rf "$BUILD_DIR"
 
-  log "Installing MLX (TEMPORARY UNTIL PIP INSTALL SUPPORTS 0.26.0)"
-  uv pip install src/pie_core/external/mlx --no-cache-dir
-
   log "Configuring project ($BUILD_TYPE)"
   cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 

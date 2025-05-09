@@ -72,7 +72,6 @@ message(STATUS "Nanobind CMake directory: ${nanobind_ROOT}")
 find_package(nanobind CONFIG REQUIRED)
 
 # --- Find External Dependencies ---
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/mlx EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers EXCLUDE_FROM_ALL)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/proxy-attention-lab EXCLUDE_FROM_ALL)
@@ -123,8 +122,8 @@ find_package(MLX CONFIG REQUIRED)
 include_directories(
     SYSTEM
     ${pse_core_INCLUDE_DIRS}
+    ${mlx_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/mlx/mlx
     ${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/proxy-attention-lab
 )
@@ -205,6 +204,10 @@ target_compile_definitions(
 
 add_executable(${ENGINE_EXE_NAME} ${PIE_ENGINE_MAIN_SRC})
 add_dependencies(${ENGINE_EXE_NAME} ${CORE_LIB_NAME})
+
+if(APPLE)
+  target_link_options(${ENGINE_EXE_NAME} PRIVATE -Wl,-rpath,@loader_path)
+endif()
 
 if(APPLE)
     target_link_libraries(${ENGINE_EXE_NAME} PRIVATE
