@@ -1,9 +1,6 @@
 [submodule "src/pie_core/external/nanobind"]
 	path = src/pie_core/external/nanobind
 	url = https://github.com/wjakob/nanobind
-[submodule "src/pie_core/external/mlx"]
-	path = src/pie_core/external/mlx
-	url = https://github.com/ml-explore/mlx.git
 [submodule "src/pie_core/external/spdlog"]
 	path = src/pie_core/external/spdlog
 	url = https://github.com/gabime/spdlog.git

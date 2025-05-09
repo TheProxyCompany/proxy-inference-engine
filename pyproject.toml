@@ -26,11 +26,9 @@ classifiers = [
 
 dependencies = [
     "pse",
-    "mlx_lm",
-    "mlx",
+    "mlx>=0.25.2",
     "pillow",
     "requests",
-    "transformers",
     "huggingface-hub",
     "fastapi[standard]",
     "pydantic-settings",
@@ -47,9 +45,7 @@ dev = [
     "build",
     "twine",
     "ruff",
-    "pre-commit",
-    "psutil"
-
+    "pre-commit"
 ]
 
 [project.urls]
@@ -92,9 +88,9 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 
 [tool.black]
-line-length = 100
+line-length = 120
 target-version = ["py312"]
 
 [tool.isort]
 profile = "black"
-line_length = 100
+line_length = 120

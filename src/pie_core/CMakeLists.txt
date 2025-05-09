@@ -118,7 +118,6 @@ else()
 endif()
 
 find_package(MLX CONFIG REQUIRED)
-target_compile_options(mlx PRIVATE -w)
 
 # --- Global Include Directories ---
 include_directories(
@@ -129,18 +128,6 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/proxy-attention-lab
 )
-
-if(TARGET pal_core_lib_metallib) # Check if PAL's metallib target exists
-    # This gets the location of the built .metallib file from PAL's build directory
-    get_target_property(PAL_METALLIB_LOCATION pal_core_lib_metallib LOCATION)
-
-    install(
-        FILES "${PAL_METALLIB_LOCATION}"
-        DESTINATION bin
-        RENAME "pal_core_lib.metallib"
-        COMPONENT engine_resources
-    )
-endif()
 
 # --- Source Files, Module Definition, Target Properties ---
 file(GLOB_RECURSE PIE_CORE_LIB_SRC CONFIGURE_DEPENDS
@@ -191,7 +178,7 @@ target_link_libraries(${CORE_LIB_NAME} PRIVATE pal_core_lib)
 
 nanobind_add_module(
     ${EXTENSION_NAME}
-    STABLE_ABI NB_STATIC LTO NOMINSIZE
+    STABLE_ABI LTO NOMINSIZE
     ${PIE_BINDINGS_SRC}
 )
 
@@ -251,21 +238,38 @@ target_link_options(${ENGINE_EXE_NAME} PRIVATE
 # --- Installation ---
 set(PYTHON_MODULE_INSTALL_DESTINATION "${PROJECT_NAME}")
 
+if(TARGET pal_metallib)
+    set(PAL_METALLIB_BUILT_FILE "$<TARGET_FILE:pal_metallib>")
+    message(STATUS "PAL metallib built file: ${PAL_METALLIB_BUILT_FILE}")
+    set(PAL_METALLIB_PATH_IN_BUILD_TREE "${CMAKE_CURRENT_BINARY_DIR}/external/proxy-attention-lab/src/pal_core/pal.metallib")
+
+    if(EXISTS "${PAL_METALLIB_PATH_IN_BUILD_TREE}")
+        message(STATUS "Attempting to install PAL metallib from ${PAL_SUBMODULE_BINARY_DIR}/${PAL_EXPECTED_METALLIB_FILENAME} to bin/")
+        install(
+            FILES "${PAL_METALLIB_PATH_IN_BUILD_TREE}"
+            DESTINATION bin
+            COMPONENT engine_resources
+        )
+        message(STATUS "PIE: Scheduled installation of PAL's metallib to bin/pal.metallib")
+
+        install(
+            FILES "${PAL_METALLIB_PATH_IN_BUILD_TREE}"
+            DESTINATION "${PYTHON_MODULE_INSTALL_DESTINATION}"
+            RENAME "pal.metallib"
+            COMPONENT python_modules
+        )
+        message(STATUS "PIE: Scheduled installation of PAL's metallib to Python module dir as pal.metallib")
+    endif()
+else()
+    message(WARNING "PAL metallib target 'pal_metallib' not found. Paged attention in standalone pie_engine might fail.")
+endif()
+
 # Install the compiled C++ extension module (Python Bindings)
 install(
     TARGETS ${EXTENSION_NAME}
     LIBRARY DESTINATION ${PYTHON_MODULE_INSTALL_DESTINATION}
     COMPONENT python_modules
 )
-
-if(MLX_BUILD_METAL AND TARGET pie_core_metallib)
-    # Install the Metal library alongside the Python module
-    install(
-        FILES ${CMAKE_CURRENT_BINARY_DIR}/pie_core.metallib
-        DESTINATION ${PYTHON_MODULE_INSTALL_DESTINATION}
-        COMPONENT python_modules
-    )
-endif()
 
 # Install the standalone C++ engine executable
 install(
