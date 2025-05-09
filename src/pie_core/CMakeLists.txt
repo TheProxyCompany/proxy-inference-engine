@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
+project(pie_core LANGUAGES CXX)
 cmake_policy(SET CMP0087 NEW)
 
 set(PROJECT_NAME proxy_inference_engine) # Top-level project name
@@ -186,6 +187,7 @@ target_link_libraries(${CORE_LIB_NAME} PUBLIC
     tokenizers_cpp
     nlohmann_json::nlohmann_json
     spdlog::spdlog_header_only
+    pal_core_lib
 )
 
 target_compile_options(${CORE_LIB_NAME} PRIVATE
