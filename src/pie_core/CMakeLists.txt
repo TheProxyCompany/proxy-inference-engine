@@ -49,10 +49,6 @@ else()
     endif()
 endif()
 
-if(NOT APPLE)
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
-endif()
-
 # Build type configuration
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
@@ -140,8 +136,18 @@ execute_process(
   OUTPUT_VARIABLE MLX_ROOT)
 message(STATUS "PIE: Using MLX CMake directory from Python env: ${MLX_ROOT}")
 find_package(MLX CONFIG REQUIRED)
-
 message(STATUS "MLX_ROOT: ${MLX_ROOT}")
+
+# Set MLX library directory
+set(MLX_LIB_DIR "${MLX_ROOT}/lib")
+message(STATUS "MLX library directory: ${MLX_LIB_DIR}")
+
+if(EXISTS "${MLX_ROOT}/include")
+    set(MLX_INCLUDE_DIRS "${MLX_ROOT}/include" CACHE PATH "MLX include dirs" FORCE)
+else()
+    message(FATAL_ERROR "MLX include directory not found at ${MLX_ROOT}/include/")
+endif()
+
 message(STATUS "MLX_INCLUDE_DIRS: ${MLX_INCLUDE_DIRS}")
 
 # --- Global Include Directories ---
@@ -168,8 +174,6 @@ file(GLOB_RECURSE PIE_CORE_LIB_SRC CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/tokenizers/*.cpp"
 )
 
-add_dependencies(pal_core_lib mlx)
-
 # Define source for Python bindings
 set(PIE_BINDINGS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/bindings.cpp")
 
@@ -184,6 +188,7 @@ target_include_directories(${CORE_LIB_NAME}
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MLX_INCLUDE_DIRS}
 )
 
 target_link_libraries(${CORE_LIB_NAME} PUBLIC
@@ -206,6 +211,7 @@ target_link_libraries(${CORE_LIB_NAME} PRIVATE mlx pal_core_lib)
 
 nanobind_add_module(
     ${EXTENSION_NAME}
+    NB_STATIC
     STABLE_ABI LTO NOMINSIZE
     ${PIE_BINDINGS_SRC}
 )
@@ -221,6 +227,17 @@ target_link_options(${EXTENSION_NAME} PRIVATE
     $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
 )
 
+target_link_options(
+    ${EXTENSION_NAME}
+    PRIVATE
+    "-Wl,-rpath,${MLX_LIB_DIR}"
+)
+set_target_properties(
+    ${EXTENSION_NAME}
+    PROPERTIES
+        INSTALL_RPATH "${MLX_LIB_DIR}"
+)
+
 target_compile_definitions(
     ${EXTENSION_NAME}
     PRIVATE
@@ -233,7 +250,11 @@ add_executable(${ENGINE_EXE_NAME} ${PIE_ENGINE_MAIN_SRC})
 add_dependencies(${ENGINE_EXE_NAME} ${CORE_LIB_NAME})
 
 if(APPLE)
-  target_link_options(${ENGINE_EXE_NAME} PRIVATE -Wl,-rpath,@loader_path)
+    set_target_properties(${ENGINE_EXE_NAME} PROPERTIES
+        INSTALL_RPATH "@loader_path;$<$<BOOL:${MLX_LIB_DIR}>:${MLX_LIB_DIR}>"
+    )
+else()
+    target_link_options(${ENGINE_EXE_NAME} PRIVATE -Wl,-rpath,@loader_path)
 endif()
 
 if(APPLE)
