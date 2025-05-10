@@ -10,3 +10,6 @@
 [submodule "src/pie_core/external/proxy-attention-lab"]
 	path = src/pie_core/external/proxy-attention-lab
 	url = https://github.com/TheProxyCompany/proxy-attention-lab.git
+[submodule "src/pie_core/external/mlx"]
+	path = src/pie_core/external/mlx
+	url = https://github.com/ml-explore/mlx.git

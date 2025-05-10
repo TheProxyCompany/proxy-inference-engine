@@ -14,7 +14,7 @@ trap on_exit EXIT
 BUILD_DIR="${BUILD_DIR:-build}"
 MODEL_PATH="${MODEL_PATH:-.models/llama3-8b-instruct}"
 VENV_ACTIVATION_SCRIPT="${VENV_ACTIVATION_SCRIPT:-.venv/bin/activate}"
-BUILD_RUN_SCRIPT="./scripts/build_run.sh"
+BUILD_RUN_SCRIPT="./build_run.sh"
 
 ###############################################################################
 # Helpers

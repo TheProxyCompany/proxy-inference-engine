@@ -65,15 +65,34 @@ execute_process(
   COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
   OUTPUT_STRIP_TRAILING_WHITESPACE
   OUTPUT_VARIABLE nanobind_ROOT)
-message(STATUS "Nanobind CMake directory: ${nanobind_ROOT}")
 find_package(nanobind CONFIG REQUIRED)
 
 # --- Find External Dependencies ---
+
+# 1. --- Find MLX ---
+set(MLX_BUILD_EXAMPLES OFF)
+set(MLX_BUILD_BENCHMARKS OFF)
+set(MLX_BUILD_PYTHON_BINDINGS OFF)
+set(MLX_METAL_DEBUG OFF)
+set(BUILD_SHARED_LIBS ON)
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/external/mlx" EXCLUDE_FROM_ALL)
+if(NOT TARGET mlx)
+    message(FATAL_ERROR "PIE: MLX target not defined. Make sure git submodules are initialized and updated.")
+endif()
+
+# 2. --- Find spdlog ---
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog EXCLUDE_FROM_ALL)
+
+# 3. --- Find tokenizers ---
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers EXCLUDE_FROM_ALL)
+
+# 4. --- Find proxy-attention-lab ---
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/proxy-attention-lab EXCLUDE_FROM_ALL)
 
+# 5. --- Find nlohmann_json ---
 find_package(nlohmann_json 3.12.0 REQUIRED)
+
+# 6. --- Find Boost ---
 find_package(Boost)
 if(Boost_FOUND)
     message(STATUS "Boost found. Version: ${Boost_VERSION_STRING}")
@@ -100,7 +119,6 @@ message(STATUS "Setting pse_core_DIR to: ${pse_core_DIR}")
 find_package(pse_core REQUIRED)
 
 # --- Check results and proceed ---
-# Check if the specific library target 'pse_core::pse_sdk' exists after find_package
 if(TARGET pse_core::pse_sdk)
     message(STATUS "Found pse_core target: pse_core::pse_sdk")
     # Set the variable to the correct target name
@@ -113,48 +131,10 @@ else()
     endif()
 endif()
 
-# --- Find or Fetch FMT ---
-find_package(fmt QUIET)
-if(NOT fmt_FOUND)
-    message(STATUS "fmt not found via find_package. Attempting FetchContent.")
-    include(FetchContent)
-    FetchContent_Declare(
-        fmt
-        GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-        GIT_TAG "11.2.0"
-    )
-    FetchContent_MakeAvailable(fmt)
-    message(STATUS "Fetched fmt. Target fmt::fmt-header-only should be available.")
-else()
-    message(STATUS "Found fmt via find_package. Version: ${fmt_VERSION}")
-endif()
-
-# --- Find MLX ---
-execute_process(
-  COMMAND "${Python_EXECUTABLE}" -m mlx --cmake-dir
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-  OUTPUT_VARIABLE MLX_ROOT)
-message(STATUS "PIE: Using MLX CMake directory from Python env: ${MLX_ROOT}")
-find_package(MLX CONFIG REQUIRED)
-message(STATUS "MLX_ROOT: ${MLX_ROOT}")
-
-# Set MLX library directory
-set(MLX_LIB_DIR "${MLX_ROOT}/lib")
-message(STATUS "MLX library directory: ${MLX_LIB_DIR}")
-
-if(EXISTS "${MLX_ROOT}/include")
-    set(MLX_INCLUDE_DIRS "${MLX_ROOT}/include" CACHE PATH "MLX include dirs" FORCE)
-else()
-    message(FATAL_ERROR "MLX include directory not found at ${MLX_ROOT}/include/")
-endif()
-
-message(STATUS "MLX_INCLUDE_DIRS: ${MLX_INCLUDE_DIRS}")
-
 # --- Global Include Directories ---
 include_directories(
     SYSTEM
     ${pse_core_INCLUDE_DIRS}
-    ${MLX_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/proxy-attention-lab
@@ -188,16 +168,18 @@ target_include_directories(${CORE_LIB_NAME}
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${MLX_INCLUDE_DIRS}
 )
 
-target_link_libraries(${CORE_LIB_NAME} PUBLIC
-    ${PSE_CORE_LINK_TARGET}
-    mlx
-    tokenizers_cpp
-    nlohmann_json::nlohmann_json
-    spdlog::spdlog_header_only
-    pal_core_lib
+target_link_libraries(
+    ${CORE_LIB_NAME}
+    PUBLIC
+        ${PSE_CORE_LINK_TARGET}
+        mlx
+        tokenizers_cpp
+        nlohmann_json::nlohmann_json
+        spdlog::spdlog_header_only
+    PRIVATE
+        pal_core_lib
 )
 
 target_compile_options(${CORE_LIB_NAME} PRIVATE
@@ -216,27 +198,22 @@ nanobind_add_module(
     ${PIE_BINDINGS_SRC}
 )
 
-target_link_libraries(
-    ${EXTENSION_NAME} PUBLIC ${CORE_LIB_NAME}
+target_include_directories(
+    ${EXTENSION_NAME}
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+target_link_libraries(${EXTENSION_NAME} PRIVATE ${CORE_LIB_NAME})
 
 target_compile_options(${EXTENSION_NAME} PRIVATE
     $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
 )
-target_link_options(${EXTENSION_NAME} PRIVATE
-    $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
-)
 
-target_link_options(
-    ${EXTENSION_NAME}
-    PRIVATE
-    "-Wl,-rpath,${MLX_LIB_DIR}"
-)
-set_target_properties(
-    ${EXTENSION_NAME}
-    PROPERTIES
-        INSTALL_RPATH "${MLX_LIB_DIR}"
-)
+get_target_property(MLX_SO_LIB_DIR mlx LIBRARY_OUTPUT_DIRECTORY)
+if(MLX_SO_LIB_DIR)
+    target_link_options(${EXTENSION_NAME} PRIVATE "-Wl,-rpath,${MLX_SO_LIB_DIR}")
+endif()
 
 target_compile_definitions(
     ${EXTENSION_NAME}
@@ -249,40 +226,22 @@ target_compile_definitions(
 add_executable(${ENGINE_EXE_NAME} ${PIE_ENGINE_MAIN_SRC})
 add_dependencies(${ENGINE_EXE_NAME} ${CORE_LIB_NAME})
 
-if(APPLE)
-    set_target_properties(${ENGINE_EXE_NAME} PROPERTIES
-        INSTALL_RPATH "@loader_path;$<$<BOOL:${MLX_LIB_DIR}>:${MLX_LIB_DIR}>"
-    )
-else()
-    target_link_options(${ENGINE_EXE_NAME} PRIVATE -Wl,-rpath,@loader_path)
+if(TARGET pal_metallib)
+    add_dependencies(${ENGINE_EXE_NAME} pal_metallib)
 endif()
 
-if(APPLE)
-    target_link_libraries(${ENGINE_EXE_NAME} PRIVATE
-        "-Wl,-force_load,$<TARGET_FILE:${CORE_LIB_NAME}>"
-        ${PSE_CORE_LINK_TARGET}
-        mlx
-        tokenizers_cpp
-        nlohmann_json::nlohmann_json
-        spdlog::spdlog_header_only
-        pal_core_lib
-    )
-else()
-    target_link_libraries(${ENGINE_EXE_NAME} PRIVATE
-        "-Wl,--whole-archive" $<TARGET_FILE:${CORE_LIB_NAME}> "-Wl,--no-whole-archive"
-        ${PSE_CORE_LINK_TARGET}
-        mlx
-        tokenizers_cpp
-        nlohmann_json::nlohmann_json
-        spdlog::spdlog_header_only
-        pal_core_lib
-    )
+target_link_libraries(${ENGINE_EXE_NAME} PRIVATE ${CORE_LIB_NAME})
+
+if(MLX_SO_LIB_DIR)
+    target_link_options(${ENGINE_EXE_NAME} PRIVATE "-Wl,-rpath,${MLX_SO_LIB_DIR}")
+    if(APPLE)
+        set_target_properties(${ENGINE_EXE_NAME} PROPERTIES INSTALL_RPATH "@loader_path;${MLX_SO_LIB_DIR}")
+    endif()
+elseif(APPLE)
+    set_target_properties(${ENGINE_EXE_NAME} PROPERTIES INSTALL_RPATH "@loader_path")
 endif()
 
 target_compile_options(${ENGINE_EXE_NAME} PRIVATE
-    $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
-)
-target_link_options(${ENGINE_EXE_NAME} PRIVATE
     $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
 )
 
@@ -292,13 +251,14 @@ set(PYTHON_MODULE_INSTALL_DESTINATION "${PROJECT_NAME}")
 if(TARGET pal_metallib)
     set(PAL_METALLIB_BUILT_FILE "$<TARGET_FILE:pal_metallib>")
     message(STATUS "PAL metallib built file: ${PAL_METALLIB_BUILT_FILE}")
-    set(PAL_METALLIB_PATH_IN_BUILD_TREE "${CMAKE_CURRENT_BINARY_DIR}/external/proxy-attention-lab/src/pal_core/pal.metallib")
+    set(PAL_METALLIB_PATH_IN_BUILD_TREE "${CMAKE_BINARY_DIR}/external/proxy-attention-lab/src/pal_core/pal.metallib")
 
     if(EXISTS "${PAL_METALLIB_PATH_IN_BUILD_TREE}")
         message(STATUS "Attempting to install PAL metallib from ${PAL_SUBMODULE_BINARY_DIR}/${PAL_EXPECTED_METALLIB_FILENAME} to bin/")
         install(
             FILES "${PAL_METALLIB_PATH_IN_BUILD_TREE}"
             DESTINATION bin
+            RENAME "pal.metallib"
             COMPONENT engine_resources
         )
         message(STATUS "PIE: Scheduled installation of PAL's metallib to bin/pal.metallib")
