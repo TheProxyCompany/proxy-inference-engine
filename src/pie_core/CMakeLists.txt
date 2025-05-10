@@ -141,11 +141,14 @@ execute_process(
 message(STATUS "PIE: Using MLX CMake directory from Python env: ${MLX_ROOT}")
 find_package(MLX CONFIG REQUIRED)
 
+message(STATUS "MLX_ROOT: ${MLX_ROOT}")
+message(STATUS "MLX_INCLUDE_DIRS: ${MLX_INCLUDE_DIRS}")
+
 # --- Global Include Directories ---
 include_directories(
     SYSTEM
     ${pse_core_INCLUDE_DIRS}
-    ${MLX_ROOT}/mlx
+    ${MLX_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/proxy-attention-lab
@@ -164,6 +167,8 @@ file(GLOB_RECURSE PIE_CORE_LIB_SRC CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/sequence/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/tokenizers/*.cpp"
 )
+
+add_dependencies(pal_core_lib mlx)
 
 # Define source for Python bindings
 set(PIE_BINDINGS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/bindings.cpp")
@@ -197,7 +202,7 @@ target_link_options(${CORE_LIB_NAME} PRIVATE
     $<$<CONFIG:Coverage>:-fprofile-instr-generate;-fcoverage-mapping>
 )
 
-target_link_libraries(${CORE_LIB_NAME} PRIVATE pal_core_lib)
+target_link_libraries(${CORE_LIB_NAME} PRIVATE mlx pal_core_lib)
 
 nanobind_add_module(
     ${EXTENSION_NAME}
@@ -206,11 +211,7 @@ nanobind_add_module(
 )
 
 target_link_libraries(
-    ${EXTENSION_NAME}
-    PUBLIC
-        mlx
-    PRIVATE
-        ${CORE_LIB_NAME}
+    ${EXTENSION_NAME} PUBLIC ${CORE_LIB_NAME}
 )
 
 target_compile_options(${EXTENSION_NAME} PRIVATE
