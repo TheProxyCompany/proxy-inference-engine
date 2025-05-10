@@ -145,7 +145,7 @@ find_package(MLX CONFIG REQUIRED)
 include_directories(
     SYSTEM
     ${pse_core_INCLUDE_DIRS}
-    ${mlx_INCLUDE_DIRS}
+    ${MLX_ROOT}/mlx
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/tokenizers/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/proxy-attention-lab
